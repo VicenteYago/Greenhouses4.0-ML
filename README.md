@@ -12,6 +12,9 @@
   - internal air temperature
   - inside temperature of the pots
   
+  ![Pleiades interiors](https://github.com/VicenteYago/Greenhouses4.0-ML/blob/main/images/temperaturasGlobal.jpeg)
+
+  
   
  #### Additionally for the Pleiades greenhouse, a prediction system for the indoor air temperature has been developed, based on automatic statistical models
   - auto.arima
