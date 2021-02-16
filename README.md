@@ -27,6 +27,9 @@
 
 In order to improve this system, a brief study has been carried out to determine the number of days to be provided to each model in order to obtain a balance between accuracy and consumption of computational resources.
 
+ ![Pleiades interiors](https://github.com/VicenteYago/Greenhouses4.0-ML/blob/main/images/testsAlineadosdual.jpeg)
+
+
 
 #### In addition, two scenarios have been developed to make the predictions:
   - Un-informed scenario: Only indoor temperature history is available
