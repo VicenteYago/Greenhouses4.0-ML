@@ -65,7 +65,7 @@ In order to improve this system, a brief study has been carried out to determine
 
 
 #### Finally, as a practical case, an alert system has been developed, defined as follows
-  - An alarm is triggered if in a week the predicted temperature exceeds the threshold 40 º C for 6 hours in a row.
+  - An alarm is triggered (SNAIVE) if in a week the predicted temperature exceeds the threshold 40 º C for 6 hours in a row.
 
   |           | NO ALARM | ALARM |  
   | :-------: | :----: | :----: |
@@ -73,5 +73,7 @@ In order to improve this system, a brief study has been carried out to determine
   | **ALARM**   | FNR =  0  | TPR = 1
 
 ACC = 0.89  
+
+ ![Pleiades interiors](https://github.com/VicenteYago/Greenhouses4.0-ML/blob/main/images/ROCnonInf.jpeg)
 
 
