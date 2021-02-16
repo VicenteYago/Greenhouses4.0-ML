@@ -60,6 +60,8 @@ In order to improve this system, a brief study has been carried out to determine
   | nnetar  | 6.83   |  2.16  |  1.60  | 12568   |  60   |
   | auto.arima   | 8.66   |  3.08  |  2.24  | 268538   |  150   |
   | snaive  | 9.77   |  3.19  |  2.38  |  1  |  1   |
+  
+ ![Pleiades interiors](https://github.com/VicenteYago/Greenhouses4.0-ML/blob/main/images/boxplotsEscenarios.jpeg)
 
 
 #### Finally, as a practical case, an alert system has been developed, defined as follows
