@@ -1,0 +1,1326 @@
+---
+title: "Periodos óptimos de entrenamiento para modelos no informados"
+author: "Jose Vicente Yago Martinez"
+date: "24/5/2019"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache =  TRUE)
+```
+
+# INTRODUCCI?N
+
+* En este notebook se van a analizar el funcionamiento de los modelos siguientes:
+  + NNETAR
+  + ARIMA
+  + SNAIVE 
+  + TBATS
+  + PROPHET
+
+<<<<<<< HEAD
+desde la perspectiva de una predicci?n no informada, es decir sin ayuda de variables extras, ?nicamente se 
+va a disponer del hist?ricos de los datos respecto al a?o 2018, representado en los objetos `ts.daily` en forma de serie de tiempo y en `pleiadesGH.v2` como dataframe.
+
+El objetivo final es determinar de forma razonada cual va a ser el peri?dod de entrenamiento (n?de d?as) asignados
+a cada modelo para realizar su ajuste con las mejores garant?as.
+
+
+Algunas librer?as y variables ?tiles
+=======
+desde la perspectiva de una predicci?n no informada, es decir sin ayuda de variables extras, ?nicamente se 
+va a disponer del hist?ricos de los datos respecto al a?o 2018, representado en los objetos `ts.daily` en forma de serie de tiempo y en `pleiadesGH.v2` como dataframe.
+
+El objetivo final es determinar de forma razonada cual va a ser el peri?dod de entrenamiento (n?de d?as) asignados
+a cada modelo para realizar su ajuste con las mejores garant?as.
+
+
+Algunas librer?as y variables ?tiles
+```{r}
+library(forecast)
+#library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tsfeatures)
+library(tidyverse)
+#library(ForecastComb)
+library(imputeTS)
+#library(GGally)
+library(gridExtra)
+#library(PerformanceAnalytics)
+library(dplyr)
+
+
+
+source("../../GREENHOUSES/funciones/optimunTrainNoInf.R")
+
+freq.daily <- 48
+route  = "./MODELS/"
+route_proc = "../../DATA/DATA_UMU/PROC/"
+ts.daily <- paste(route_proc, "ts.daily.rds", sep="") %>%  readRDS()
+ts.daily.broken <- paste(route_proc, "ts.daily.broken.rds", sep="") %>%  readRDS()
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+
+```
+
+```{r}
+#NNETARs
+nnetars.tempInt.1 <- paste(route, "nnetars.tempInt.1.rds", sep="") %>%  readRDS()
+nnetars.tempInt.1.fcasts <- paste(route, "nnetars.tempInt.1.fcasts.rds", sep="") %>%  readRDS()
+nnetars.tempInt.2 <- paste(route, "nnetars.tempInt.2.rds", sep="") %>%  readRDS()
+nnetars.tempInt.2.fcasts <- paste(route, "nnetars.tempInt.2.fcasts.rds", sep="") %>%  readRDS()
+nnetars.tempInt.3 <- paste(route, "nnetars.tempInt.3.rds", sep="") %>%  readRDS()
+nnetars.tempInt.3.fcasts <- paste(route, "nnetars.tempInt.3.fcasts.rds", sep="") %>%  readRDS()
+nnetars.tempInt.4 <- paste(route, "nnetars.tempInt.4.rds", sep="") %>%  readRDS()
+nnetars.tempInt.4.fcasts <- paste(route, "nnetars.tempInt.4.fcasts.rds", sep="") %>%  readRDS()
+#ARIMAS
+arimas.tempInt.1 <- paste(route, "arima.tempInt.1.rds", sep="") %>%  readRDS()
+arimas.tempInt.1.fcasts <- paste(route, "arimas.tempInt.1.fcasts.rds", sep="") %>%  readRDS()
+#TBATS
+tbats.tempInt.1 <- paste(route, "tbats.tempInt.1.rds", sep="") %>%  readRDS()
+tbats.tempInt.1.fcasts <- paste(route, "tbats.tempInt.1.fcasts.rds", sep="") %>%  readRDS()
+#SNAIVE
+snaive.tempInt.1 <- paste(route, "snaive.tempInt.1.rds", sep="") %>%  readRDS()
+#PROPHET
+prophet.tempInt.1 <- paste(route, "prophet.tempInt.1.rds", sep="") %>%  readRDS()
+prophet.tempInt.1.fcasts <- paste(route, "prophet.tempInt.1.fcasts.rds", sep="") %>%  readRDS()
+```
+
+
+
+
+# CONJUNTOS DE ENTRENAMIENTO
+Para que la comparativa sea objetiva y no se vea alterada por la presencia de nulos interpolados mi rango de trabajo va
+a estar entre el dia n? 50 y el 300 aproximadamente. Visualmente podemos verificar que en ese rango no hay valores nulos.
+```{r dpi = 200}
+ts.daily[,"tempInt"] %>% autoplot(series = "INTERPOLADO") +
+  autolayer(ts.daily.broken[, "tempInt"], series = "ORIGINAL", na.rm = T) + 
+  labs(y = "?C") + ggtitle("Temperatura interior 2018")+
+  geom_vline(aes(xintercept = 50))+
+  geom_vline(aes(xintercept = 290))+
+  theme_bw()+
+  theme(legend.position = "bottom",
+        legend.title = element_blank())+
+      ggsave("multiTRAIN2lines.jpg",
+         width = 10,
+         dpi = 200,
+         height = 6,
+         path = "./exportsPleiades") 
+```
+
+Creo un subconjunto para este rango.
+```{r dpi = 200}
+window(ts.daily[, "tempInt"], start = 50, end = 290) %>% autoplot(series = "FIXED") +
+    autolayer(window(ts.daily.broken[, "tempInt"], start = 50, end = 290), series = "ORIGINAL", na.rm = T) +
+    labs(x = "time(days)", y = "?C") + ggtitle("Interior temperature")
+
+window(ts.daily[, "tempMac"], start = 50, end = 290) %>% autoplot(series = "FIXED") +
+    autolayer(window(ts.daily.broken[, "tempMac"], start = 50, end = 290), series = "ORIGINAL", na.rm = T) +
+    labs(x = "time(days)", y = "?C") + ggtitle("Interior pot temperature")
+
+ts.multitrain <- window(ts.daily.broken,  start = 50, end = 290)
+```
+
+
+<<<<<<< HEAD
+En este estudio el *forecast horizont* va a ser de 7 d?as, por eso elegimos esta cifra
+para el conjunto de test, los d?as restantes se asignana al entrenamiento.
+=======
+
+
+En este estudio el *forecast horizont* va a ser de 7 d?as, por eso elegimos esta cifra
+para el conjunto de test, los d?as restantes se asignana al entrenamiento.
+```{r dpi = 200}
+ts.multitrain.test <- tail(ts.multitrain, 7*48)
+ts.multitrain.train <- window(ts.multitrain, end = start(ts.multitrain.test)) 
+autoplot(ts.multitrain.train[, "tempInt"], series = "TRAIN", color = "blue") + 
+  autolayer(ts.multitrain.test[, "tempInt"], series = "TEST", color = "green") +  
+  theme_bw()+
+  labs(color = element_blank(), y = "?C")+
+  theme(legend.position = "bottom") + 
+    ggtitle("Temperatura interior TRAINING + TEST") +
+    ggsave("TRAINs_TEST.jpg",
+         width = 12,
+         dpi = "print",
+         height = 6,
+         path = "./exportsPleiades") 
+
+autoplot(ts.multitrain.test[, "tempInt"], series = "TEST") +  
+  labs(x = "time(days)", y = "ºC") + ggtitle("Interior temperature TEST")
+```
+
+Se verifica que el conjunto elegido no contiene ning?n valor interpolado. Tenemos un total de 250 d?as
+
+
+Ahora se van a crear una serie de conjuntos de entreamiento cada vez m?s grandes, aumentando de 15 en 15 d?as hasta llegar al conjunto m?s grande posible.
+Se verifica que el conjunto elegido no contiene ning?n valor interpolado. Tenemos un total de 250 d?as
+
+
+Ahora se van a crear una serie de conjuntos de entreamiento cada vez m?s grandes, aumentando de 15 en 15 d?as hasta llegar al conjunto m?s grande posible.
+```{r}
+listaTrainSets   <- list(TRAIN0   = tail(ts.multitrain.train, 15*1*48),# 15 
+                         TRAIN1   = tail(ts.multitrain.train, 15*2*48),# 30
+                         TRAIN2   = tail(ts.multitrain.train, 15*3*48),# 45
+                         TRAIN3   = tail(ts.multitrain.train, 15*4*48),# 60
+                         TRAIN4   = tail(ts.multitrain.train, 15*5*48),# 75
+                         TRAIN5   = tail(ts.multitrain.train, 15*6*48),# 90
+                         TRAIN6   = tail(ts.multitrain.train, 15*7*48),# 105
+                         TRAIN7   = tail(ts.multitrain.train, 15*8*48),# 120
+                         TRAIN8   = tail(ts.multitrain.train, 15*9*48),# 135
+                         TRAIN9   = tail(ts.multitrain.train, 15*10*48),# 150
+                         TRAIN10  = tail(ts.multitrain.train, 15*11*48),# 165
+                         TRAIN11  = tail(ts.multitrain.train, 15*12*48),# 180
+                         TRAIN12  = tail(ts.multitrain.train, 15*13*48),# 195
+                         TRAIN13  = tail(ts.multitrain.train, 15*14*48),# 210
+                         TRAIN14  = tail(ts.multitrain.train, 15*15*48),# 225
+                         TRAIN15  = tail(ts.multitrain.train, 15*16*48))# 240
+```
+
+```{r, dpi = 200}
+autoplot(listaTrainSets$TRAIN0[,"tempInt"], series = "TRAIN0") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs( y = "?C", x = element_blank()) +
+  theme_bw() +
+    ggsave("train0.jpg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+  
+
+autoplot(listaTrainSets$TRAIN1[,"tempInt"], series = "TRAIN1") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN2[,"tempInt"], series = "TRAIN2") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN3[,"tempInt"], series = "TRAIN3") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN4[,"tempInt"], series = "TRAIN4") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN5[,"tempInt"], series = "TRAIN5") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN6[,"tempInt"], series = "TRAIN6") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+
+autoplot(listaTrainSets$TRAIN2[,"tempInt"], series = "TRAIN2") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN3[,"tempInt"], series = "TRAIN3") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN4[,"tempInt"], series = "TRAIN4") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN5[,"tempInt"], series = "TRAIN5") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN6[,"tempInt"], series = "TRAIN6") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+
+autoplot(listaTrainSets$TRAIN7[,"tempInt"], series = "TRAIN7") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs( y = "?C", x = element_blank()) +
+  theme_bw() +
+    ggsave("train7.jpg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+
+autoplot(listaTrainSets$TRAIN8[,"tempInt"], series = "TRAIN8") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN9[,"tempInt"], series = "TRAIN9") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN10[,"tempInt"], series = "TRAIN10") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN11[,"tempInt"], series = "TRAIN11") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN12[,"tempInt"], series = "TRAIN12") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN13[,"tempInt"], series = "TRAIN13") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN14[,"tempInt"], series = "TRAIN14") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN15[,"tempInt"], series = "TRAIN15") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C")+
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN9[,"tempInt"], series = "TRAIN9") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN10[,"tempInt"], series = "TRAIN10") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN11[,"tempInt"], series = "TRAIN11") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN12[,"tempInt"], series = "TRAIN12") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN13[,"tempInt"], series = "TRAIN13") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN14[,"tempInt"], series = "TRAIN14") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C") + ggtitle("Temperatura interior")
+
+autoplot(listaTrainSets$TRAIN15[,"tempInt"], series = "TRAIN15") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs(y = "?C")+
+  theme_bw() +
+    ggsave("train15.jpg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")   
+```
+
+```{r}
+cbind(
+  "0" = listaTrainSets$TRAIN0[,"tempInt"],
+  "1" = listaTrainSets$TRAIN1[,"tempInt"],
+  "2" = listaTrainSets$TRAIN2[,"tempInt"],
+  "3" = listaTrainSets$TRAIN3[,"tempInt"],
+  "4" = listaTrainSets$TRAIN4[,"tempInt"],
+  "5" = listaTrainSets$TRAIN5[,"tempInt"],
+  "6" = listaTrainSets$TRAIN6[,"tempInt"],
+  "7" = listaTrainSets$TRAIN7[,"tempInt"],
+  "8" = listaTrainSets$TRAIN8[,"tempInt"],
+  "9" = listaTrainSets$TRAIN9[,"tempInt"],
+  "10" = listaTrainSets$TRAIN10[,"tempInt"],
+  "11" = listaTrainSets$TRAIN11[,"tempInt"],
+  "12" = listaTrainSets$TRAIN12[,"tempInt"],
+  "13" = listaTrainSets$TRAIN13[,"tempInt"],
+  "14" = listaTrainSets$TRAIN14[,"tempInt"],
+  "15" = listaTrainSets$TRAIN15[,"tempInt"]) %>% 
+  autoplot(facets = T)  +
+ # ggtitle("Periodos de entrenamiento") +
+    theme_bw()+
+    theme(legend.position = "bottom",
+        title = element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        plot.title = element_text(hjust = 0.5)) 
+  labs(x = "time (days)", y =element_blank()) +
+  ggsave("allTrainingperiods.jpg",
+         width = 5,
+         dpi = "print",
+         height = 8,
+         path = "./exportsPleiades")
+```
+
+
+# NNETARS
+
+## TEMPERATURA INTERIOR
+Se procede a realizar los 4 experimentos, entrenando en cada uno 
+de ellos una red neuronal para cada uno de los 16 conjuntos de entrenamiento con el objetivo de averiguar cual es el que provee 
+de un mejor resultado.
+```{r}
+#EXPERIMENTO 1
+if(F){
+  nnetars.tempInt.1<-train_NNs(listaTrainSets, "tempInt")
+  saveRDS(nnetars.tempInt.1, paste(route, "nnetars.tempInt.1.rds", sep=""))
+  nnetars.tempInt.1.fcasts<-get_multiFcasts(nnetars.tempInt.1, 7, 48)
+  saveRDS(nnetars.tempInt.1.fcasts, paste(route, "nnetars.tempInt.1.fcasts.rds", sep=""))
+}
+
+#EXPERIMENTO 2
+if(F){
+  nnetars.tempInt.2<-train_NNs(listaTrainSets, "tempInt")
+  saveRDS(nnetars.tempInt.2, paste(route, "nnetars.tempInt.2.rds", sep=""))
+  nnetars.tempInt.2.fcasts<-get_multiFcasts(nnetars.tempInt.2,  7, 48)
+  saveRDS(nnetars.tempInt.2.fcasts, paste(route, "nnetars.tempInt.2.fcasts.rds", sep=""))
+}
+
+
+#EXPERIMENTO 3 OK
+if(F){
+  nnetars.tempInt.3<-train_NNs(listaTrainSets, "tempInt")
+  saveRDS(nnetars.tempInt.3, paste(route, "nnetars.tempInt.3.rds", sep=""))
+  nnetars.tempInt.3.fcasts<-get_multiFcasts(nnetars.tempInt.3,  7, 48)
+  saveRDS(nnetars.tempInt.3.fcasts, paste(route, "nnetars.tempInt.3.fcasts.rds", sep=""))
+}
+
+
+#EXPERIMENTO 4 OK
+if(F){
+  nnetars.tempInt.4<-train_NNs(listaTrainSets, "tempInt")
+  saveRDS(nnetars.tempInt.4, paste(route, "nnetars.tempInt.4.rds", sep=""))
+  nnetars.tempInt.4.fcasts<-get_multiFcasts(nnetars.tempInt.4,  7, 48)
+  saveRDS(nnetars.tempInt.4.fcasts, paste(route, "nnetars.tempInt.4.fcasts.rds", sep=""))
+}
+```
+
+
+Finalmente estos son los resultados para cada conjunto de entrenamiento.
+
+```{r}
+((sapply(nnetars.tempInt.1.fcasts, '[[', "mean") + 
+ sapply(nnetars.tempInt.2.fcasts, '[[', "mean") + 
+ sapply(nnetars.tempInt.3.fcasts, '[[', "mean") +
+ sapply(nnetars.tempInt.4.fcasts, '[[', "mean"))/4) %>%
+  ts(frequency = 48, 
+     start = (nnetars.tempInt.1.fcasts$`1`$mean %>% start)) -> nnetars.tempInt.mean.fcasts
+
+```
+
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempInt.mean.fcasts[,1], series = "TR0") +
+  autolayer(nnetars.tempInt.mean.fcasts[,2], series = "TR1") +
+  autolayer(nnetars.tempInt.mean.fcasts[,3], series = "TR2") +
+  autolayer(nnetars.tempInt.mean.fcasts[,4], series = "TR3") +
+  autolayer(nnetars.tempInt.mean.fcasts[,5], series = "TR4") +
+  autolayer(nnetars.tempInt.mean.fcasts[,6], series = "TR5") +
+  autolayer(nnetars.tempInt.mean.fcasts[,7], series = "TR6") +
+  autolayer(nnetars.tempInt.mean.fcasts[,8], series = "TR7") +
+  autolayer(nnetars.tempInt.mean.fcasts[,9], series = "TR8") +
+  autolayer(nnetars.tempInt.mean.fcasts[,10], series = "TR9") +
+  autolayer(nnetars.tempInt.mean.fcasts[,11], series = "TR10") +
+  autolayer(nnetars.tempInt.mean.fcasts[,12], series = "TR11") +
+  autolayer(nnetars.tempInt.mean.fcasts[,13], series = "TR12") +
+  autolayer(nnetars.tempInt.mean.fcasts[,14], series = "TR13") +
+  autolayer(nnetars.tempInt.mean.fcasts[,15], series = "TR14") +
+  autolayer(nnetars.tempInt.mean.fcasts[,16], series = "TR15") + 
+  coord_cartesian(y=c(10,40))+
+  theme_bw()+
+  labs(x = "time", y = "C",color = element_blank()) + ggtitle("blabla")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))
+  ggsave("nnetarTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+La red neuronal exhibe un comportamiento err?tico, con tendencia a desfasarse r?pidamente conforme m?s se avanza en el horizonte de predicciones. 
+
+Se pueden observar underfitting:
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempInt.mean.fcasts[,1],series = "TRAIN0") +
+  
+  autolayer(nnetars.tempInt.mean.fcasts[,2],series = "TRAIN1") +
+
+  coord_cartesian(y=c(10,40))+
+  theme_bw()+
+  labs(x = "time", y = "?C",color = element_blank()) + ggtitle("NNETAR UNDERFITTING [media]")+
+  ggsave("nnetarTrainUnderfitting.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+En los primeros conjuntos de entrenamientos con 15 y 30 dias respectivamente, la red no ha conseguido 
+ajustar sus pesos de forma razonable.
+ 
+ 
+Y overffiting
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempInt.mean.fcasts[,13],series = "TRAIN13") +
+  autolayer(nnetars.tempInt.mean.fcasts[,14],series = "TRAIN14") +
+  autolayer(nnetars.tempInt.mean.fcasts[,15],series = "TRAIN15") +
+  coord_cartesian(y=c(10,40))+
+  theme_bw()+
+  labs(y = "?C",color = element_blank()) + ggtitle("NNETAR OVERFITTING [media]")+
+  guides(col = guide_legend(ncol = 1))+
+  ggsave("nnetarTrainOverfitting.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+<<<<<<< HEAD
+Estos son los 3 conjuntos de entrenamiento m?s grandes con 210, 225, 240 d?as  respectivamente. En los forecasts existe un desfase 
+desde el principio que cada vez aumenta m?s. Parece que ni los primeros entrenamientos ni los ?ltimos son una buena opci?n.
+=======
+Estos son los 3 conjuntos de entrenamiento m?s grandes con 210, 225, 240 d?as  respectivamente. En los forecasts existe un desfase 
+desde el principio que cada vez aumenta m?s. Parece que ni los primeros entrenamientos ni los ?ltimos son una buena opci?n.
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempInt.mean.fcasts[,6],series = "TR6", size = 2) +
+  autolayer(nnetars.tempInt.mean.fcasts[,1],series = "TR0") +
+  autolayer(nnetars.tempInt.mean.fcasts[,15],series = "TR15") +
+
+  coord_cartesian(y=c(10,40))+
+  theme_bw()+
+  theme(legend.position = "bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  labs(y = "?C",color = element_blank()) + ggtitle("Temperatura interior NNETAR [MEDIA 4 EXPERIMENTOS]")+
+  ggsave("nnetarTrain6.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+```{r dpi = 200}
+accs.nnetars.tempInt.1 <- get_multiAccs(ts.multitrain.test,  nnetars.tempInt.1.fcasts, "tempInt")
+accs.nnetars.tempInt.2 <- get_multiAccs(ts.multitrain.test,  nnetars.tempInt.2.fcasts, "tempInt")
+accs.nnetars.tempInt.3 <- get_multiAccs(ts.multitrain.test,  nnetars.tempInt.3.fcasts, "tempInt")
+accs.nnetars.tempInt.4 <- get_multiAccs(ts.multitrain.test,  nnetars.tempInt.4.fcasts, "tempInt")
+```
+
+### RMSE  Y MAPE
+```{r dpi = 200}
+ggplot()+
+  geom_line(aes(x = accs.nnetars.tempInt.1$TRAINS, y = accs.nnetars.tempInt.1$RMSE, group = 1, colour = "Exp 1"))+
+  geom_line(aes(x = accs.nnetars.tempInt.2$TRAINS, y = accs.nnetars.tempInt.2$RMSE ,group = 1, colour = "Exp 2"))+
+  geom_line(aes(x = accs.nnetars.tempInt.3$TRAINS, y = accs.nnetars.tempInt.3$RMSE, group = 1, colour = "Exp 3"))+
+  geom_line(aes(x = accs.nnetars.tempInt.4$TRAINS, y = accs.nnetars.tempInt.4$RMSE, group = 1, colour = "Exp 4"))+
+  theme_bw()+
+  scale_x_discrete(limits=as.character( accs.nnetars.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE NNETAR 16 TRAIN") +
+  labs(x = element_blank(),  y = "?C", color = element_blank()) +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggsave("nnetarRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+```{r}
+
+cbind(accs.nnetars.tempInt.1$RMSE,
+      accs.nnetars.tempInt.2$RMSE,
+      accs.nnetars.tempInt.3$RMSE,
+      accs.nnetars.tempInt.4$RMSE) %>% as.data.frame() %>% 
+  add_column(MAX = apply(., 1, max)) %>% 
+  add_column(MIN = apply(., 1, min)) -> accs.nnetars.MAXMIN.RMSE
+
+ggplot(accs.nnetars.MAXMIN.RMSE, aes(x = accs.nnetars.tempInt.1$TRAINS))+
+  geom_line(aes(y = MAX, group = 1))+
+  geom_line(aes(y = MIN, group = 1))+
+  geom_ribbon(aes(ymin = MAX, ymax = MIN, group = 1), fill = "blue", alpha = 0.5)+
+  theme_bw()+
+  scale_x_discrete(limits=as.character( accs.nnetars.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE NNETAR 16 TRAIN") +
+  labs(x = element_blank(),  y = "?C", color = element_blank()) +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+
+cbind(accs.nnetars.tempInt.1$MAPE,
+      accs.nnetars.tempInt.2$MAPE,
+      accs.nnetars.tempInt.3$MAPE,
+      accs.nnetars.tempInt.4$MAPE) %>% as.data.frame() %>% 
+  add_column(MAX = apply(., 1, max)) %>% 
+  add_column(MIN = apply(., 1, min)) -> accs.nnetars.MAXMIN.MAPE
+
+ggplot(accs.nnetars.MAXMIN.MAPE, aes(x = accs.nnetars.tempInt.1$TRAINS))+
+  geom_line(aes(y = MAX, group = 1))+
+  geom_line(aes(y = MIN, group = 1))+
+  geom_ribbon(aes(ymin = MAX, ymax = MIN, group = 1), fill = "blue", alpha = 0.5)+
+  theme_bw()+
+  scale_x_discrete(limits=as.character( accs.nnetars.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("MAPE NNETAR 16 TRAIN") +
+  labs(x = element_blank(),  y = "%", color = element_blank()) +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+```
+
+
+
+
+
+
+
+
+```{r}
+ggplot()+
+  geom_line(aes(x = accs.nnetars.tempInt.1$TRAINS, y = accs.nnetars.tempInt.1$MAPE, group = 1, colour = "Exp 1"))+
+  geom_line(aes(x = accs.nnetars.tempInt.2$TRAINS, y = accs.nnetars.tempInt.2$MAPE, group = 1, colour = "Exp 2"))+
+  geom_line(aes(x = accs.nnetars.tempInt.3$TRAINS, y = accs.nnetars.tempInt.3$MAPE, group = 1, colour = "Exp 3"))+
+  geom_line(aes(x = accs.nnetars.tempInt.4$TRAINS, y = accs.nnetars.tempInt.4$MAPE, group = 1, colour = "Exp 4"))+
+  theme_bw()+
+  scale_x_discrete(limits=as.character( accs.nnetars.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("MAPE NNETAR 16 TRAIN") +
+  labs(x = element_blank(),  y = "%", color = element_blank()) +
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 1))+
+  ggsave("nnetarMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+
+```
+
+Se confirma la hip?tesis, el mejor conjunto de entrenamiento es de tamaño medio ya que tanto el MAPE como el RMSE parecen converger
+en que el entremaniento nº 6 (105 d?as).
+
+```{r dpi = 200}
+autoplot(listaTrainSets$TRAIN6[,"tempInt"], series = "TRAIN6") + 
+  autolayer(ts.multitrain.test[,"tempInt"], series = "TEST") +
+  labs( y = "ºC") + ggtitle("Interior temperature") + theme_bw()
+```
+
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempInt.2.fcasts[[7]]$mean, series = "TRAIN6")+
+  coord_cartesian(y=c(10,40))+
+  labs( y = "?C") + ggtitle("Interior Temperature NNETAR experiment 2")
+```
+
+El resultado no es muy bueno, pero por lo menos no esta desfasado.
+
+# ARIMAS
+
+## TEMPERATURA INTERIOR
+```{r}
+if(F){
+arimas.tempInt.1 <- train_ARIMAs(listaTrainSets, "tempInt")
+saveRDS(arimas.tempInt.1, paste(route, "arima.tempInt.1.rds", sep=""))
+arimas.tempInt.1.fcasts<-get_multiFcasts(arimas.tempInt.1, 7, 48)
+saveRDS(arimas.tempInt.1.fcasts, paste(route, "arimas.tempInt.1.fcasts.rds", sep=""))
+}
+accs.arimas.tempInt.1 <- get_multiAccs(ts.multitrain.test,  arimas.tempInt.1.fcasts, "tempInt")
+```
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(arimas.tempInt.1.fcasts[[1]]$mean, series = "TR0") +
+  autolayer(arimas.tempInt.1.fcasts[[2]]$mean, series = "TR1") +
+  autolayer(arimas.tempInt.1.fcasts[[3]]$mean, series = "TR2") +
+  autolayer(arimas.tempInt.1.fcasts[[4]]$mean, series = "TR3") +
+  autolayer(arimas.tempInt.1.fcasts[[5]]$mean, series = "TR4") +
+  autolayer(arimas.tempInt.1.fcasts[[6]]$mean, series = "TR5") +
+  autolayer(arimas.tempInt.1.fcasts[[7]]$mean, series = "TR6") +
+  autolayer(arimas.tempInt.1.fcasts[[8]]$mean, series = "TR7") +
+  autolayer(arimas.tempInt.1.fcasts[[9]]$mean, series = "TR8") +
+  autolayer(arimas.tempInt.1.fcasts[[10]]$mean, series = "TR9") +
+  autolayer(arimas.tempInt.1.fcasts[[11]]$mean, series = "TR10") +
+  autolayer(arimas.tempInt.1.fcasts[[12]]$mean, series = "TR11") +
+  autolayer(arimas.tempInt.1.fcasts[[13]]$mean, series = "TR12") +
+  autolayer(arimas.tempInt.1.fcasts[[14]]$mean, series = "TR13") +
+  autolayer(arimas.tempInt.1.fcasts[[15]]$mean, series = "TR14") +
+  autolayer(arimas.tempInt.1.fcasts[[16]]$mean, series = "TR15") + 
+  theme_bw()+
+  labs(y = "?C",color = element_blank()) + ggtitle("Temperatura Interior ARIMA 16 TRAINS")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("arimaTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+<<<<<<< HEAD
+A partir del conjunto1 (15 d?as), da igual el nº de d?as que a?adamos el forecast va a ser esencialmente el mismo, 
+=======
+A partir del conjunto1 (15 d?as), da igual el nº de d?as que a?adamos el forecast va a ser esencialmente el mismo, por este motivo es casi seguro que TRAIN1 va a ser nuestro conjunto final.
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(arimas.tempInt.1.fcasts[[1]]$mean, series = "TR0") +
+  autolayer(arimas.tempInt.1.fcasts[[2]]$mean, series = "TR1", size = 2) +
+  autolayer(arimas.tempInt.1.fcasts[[16]]$mean, series = "TR15") + 
+  theme_bw()+
+  labs(x = "time", y = "?C",color = element_blank()) + ggtitle("Temperatura Interior ARIMA 16 TRAINS")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("arimaTrainSelection.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+### RMSE Y MAPE
+```{r dpi = 200}
+
+ggplot()+
+  geom_line(aes(x = accs.arimas.tempInt.1$TRAINS, y = accs.arimas.tempInt.1$RMSE,group = 1, colour = "Exp 1"))+
+  theme_bw()+
+   scale_x_discrete(limits=as.character(accs.arimas.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE ARIMA 16 TRAINS") +
+  labs(x = element_blank(),  y = "?C", color = element_blank()) +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggsave("arimaRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+ggplot()+
+  geom_line(aes(x = accs.arimas.tempInt.1$TRAINS, y = accs.arimas.tempInt.1$MAPE,group = 1, colour = "Exp 1"))+
+  theme_bw()+
+   scale_x_discrete(limits=as.character(accs.arimas.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("MAPE ARIMA 16 TRAINS") +
+  labs(x = element_blank(),  y = "%", color = element_blank()) +
+  theme(legend.position="none")+
+  guides(col = guide_legend(nrow = 1))+
+  ggsave("arimaMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+ 
+```
+
+
+Se confirma que a partir de TRAIN0, a grandes rasgos todo permanece igual, elegimos TRAIN1 (30 d?as).
+
+ 
+# TBATS
+## TEMPERATURA INTERIOR
+
+```{r}
+if(F){
+tbats.tempInt.1 <- train_TBATSs(listaTrainSets, "tempInt")
+saveRDS(tbats.tempInt.1, paste(route, "tbats.tempInt.1.rds", sep=""))
+tbats.tempInt.1.fcasts <- get_multiFcasts(tbats.tempInt.1, 7, 48)
+saveRDS(tbats.tempInt.1.fcasts, paste(route, "tbats.tempInt.1.fcasts.rds", sep=""))
+}
+accs.tbats.tempInt.1 <- get_multiAccs(ts.multitrain.test,  tbats.tempInt.1.fcasts, "tempInt")
+```
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(tbats.tempInt.1.fcasts[[1]]$mean, series = "TR0") +
+  autolayer(tbats.tempInt.1.fcasts[[2]]$mean, series = "TR1") +
+  autolayer(tbats.tempInt.1.fcasts[[3]]$mean, series = "TR2") +
+  autolayer(tbats.tempInt.1.fcasts[[4]]$mean, series = "TR3") +
+  autolayer(tbats.tempInt.1.fcasts[[5]]$mean, series = "TR4") +
+  autolayer(tbats.tempInt.1.fcasts[[6]]$mean, series = "TR5") +
+  autolayer(tbats.tempInt.1.fcasts[[7]]$mean, series = "TR6") +
+  autolayer(tbats.tempInt.1.fcasts[[8]]$mean, series = "TR7") +
+  autolayer(tbats.tempInt.1.fcasts[[9]]$mean, series = "TR8") +
+  autolayer(tbats.tempInt.1.fcasts[[10]]$mean, series = "TR9") +
+  autolayer(tbats.tempInt.1.fcasts[[11]]$mean, series = "TR10") +
+  autolayer(tbats.tempInt.1.fcasts[[12]]$mean, series = "TR11") +
+  autolayer(tbats.tempInt.1.fcasts[[13]]$mean, series = "TR12") +
+  autolayer(tbats.tempInt.1.fcasts[[14]]$mean, series = "TR13") +
+  autolayer(tbats.tempInt.1.fcasts[[15]]$mean, series = "TR14") +
+  autolayer(tbats.tempInt.1.fcasts[[16]]$mean, series = "TR15") + 
+  theme_bw()+
+
+  labs(y = "?C", color = element_blank()) + ggtitle("Temperatura interior TBATS 16 TRAINS")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("tbatsTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+  
+```
+
+```{r dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(tbats.tempInt.1.fcasts[[1]]$mean, series = "TR0", size =2) +
+  autolayer(tbats.tempInt.1.fcasts[[16]]$mean, series = "TR15") + 
+  theme_bw()+
+  labs(y = "?C", color = element_blank()) + ggtitle("Temperatura interior TBATS 16 TRAINS")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("tbatsTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+  
+```
+
+
+<<<<<<< HEAD
+En general este modelo parece muy estable, con una predicci?n regular.
+
+Echemos un vistazo ?nicamnete a los primeros sets:
+=======
+En general este modelo parece muy estable, con una predicci?n regular.
+
+Echemos un vistazo ?nicamnete a los primeros sets:
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(tbats.tempInt.1.fcasts[[1]]$mean, series = "TRAIN0") +
+  autolayer(tbats.tempInt.1.fcasts[[2]]$mean, series = "TRAIN1") +
+  autolayer(tbats.tempInt.1.fcasts[[3]]$mean, series = "TRAIN2") +
+  autolayer(tbats.tempInt.1.fcasts[[4]]$mean, series = "TRAIN3") +
+  labs(y = "?C") + ggtitle("Interior Pot Temperature TBATS") +
+  theme_bw()
+```
+
+
+Y a los ?ltimos:
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(tbats.tempInt.1.fcasts[[13]]$mean, series = "TRAIN12") +
+  autolayer(tbats.tempInt.1.fcasts[[14]]$mean, series = "TRAIN13") +
+  autolayer(tbats.tempInt.1.fcasts[[15]]$mean, series = "TRAIN14") +
+  autolayer(tbats.tempInt.1.fcasts[[16]]$mean, series = "TRAIN15") + 
+  labs(x = "time", y = "?C") + ggtitle("Interior Pot Temperature TBATS") + theme_bw()
+```
+
+
+Se observa que una vez que se establece la predicci?n para el 1er d?a, el resto de d?as es practicamente igual. Pare como si fuera un seasonal naive pero propagando no la componente estacional sino una prediccion basada en *exponential smooth*.
+
+### RMSE Y MAPE
+```{r, dpi = 200}
+ggplot()+
+  geom_line(aes(x = accs.tbats.tempInt.1$TRAINS, y = accs.tbats.tempInt.1$RMSE,group = 1, colour = "Exp 1"))+
+   scale_x_discrete(limits=as.character(accs.tbats.tempInt.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggtitle("RMSE TBATS 16 TRAINS") +
+  labs(x = "Training sets", y = "?C", color = element_blank())+
+  ggsave("tbatsRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+
+ggplot()+
+  geom_line(aes(x = accs.tbats.tempInt.1$TRAINS, y = accs.tbats.tempInt.1$MAPE,group = 1, colour = "Exp 1"))+
+   scale_x_discrete(limits=as.character(accs.tbats.tempInt.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0),legend.position="none") +
+  ggtitle("MAPE TBATS 16 TRAINS") +
+  labs(x = "Training sets", y = "%")+
+  ggsave("tbatsMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+
+```
+
+
+El entrenamiento n? 8 es el ?ptimo pero se lleva apenas 0.2 ?C con el entrenamiento n? 0, una peque?a
+diferencia, sin embargo la diferencia en n?de d?a es muy grande (120 d?as)
+
+```{r, dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(tbats.tempInt.1.fcasts[[1]]$mean, series = "TRAIN0") +
+  autolayer(tbats.tempInt.1.fcasts[[9]]$mean, series = "TRAIN8") +
+  autolayer(tbats.tempInt.1.fcasts[[12]]$mean, series = "TRAIN11") +
+  labs(x = "time", y = "ºC") + ggtitle("Interior Pot Temperature TBATS")
+```
+Es razonable elegir el entremaiento n? 0 para ahorrar tiempo de computaci?n ya que el resultado apenas var?a..
+Es razonable elegir el entremaiento n? 0 para ahorrar tiempo de computaci?n ya que el resultado apenas var?a..
+
+# SNAIVE
+## TEMPERATURA INTERIOR
+```{r}
+if(F){
+snaive.tempInt.1 <- train_SNAIVEs(listaTrainSets, "tempInt", 48*7)
+saveRDS(snaive.tempInt.1, paste(route, "snaive.tempInt.1.rds", sep=""))
+}
+accs.snaive.tempInt.1 <- get_multiAccs(ts.multitrain.test,  snaive.tempInt.1, "tempInt")
+```
+
+```{r,dpi = 200}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(snaive.tempInt.1[[1]]$mean, series = "TR0") +
+  autolayer(snaive.tempInt.1[[2]]$mean, series = "TR1") +
+  autolayer(snaive.tempInt.1[[3]]$mean, series = "TR2") +
+  autolayer(snaive.tempInt.1[[4]]$mean, series = "TR3") +
+  autolayer(snaive.tempInt.1[[5]]$mean, series = "TR4") +
+  autolayer(snaive.tempInt.1[[6]]$mean, series = "TR5") +
+  autolayer(snaive.tempInt.1[[7]]$mean, series = "TR6") +
+  autolayer(snaive.tempInt.1[[8]]$mean, series = "TR7") +
+  autolayer(snaive.tempInt.1[[9]]$mean, series = "TR8") +
+  autolayer(snaive.tempInt.1[[10]]$mean, series = "TR9") +
+  autolayer(snaive.tempInt.1[[11]]$mean, series = "TR10") +
+  autolayer(snaive.tempInt.1[[12]]$mean, series = "TR11") +
+  autolayer(snaive.tempInt.1[[13]]$mean, series = "TR12") +
+  autolayer(snaive.tempInt.1[[14]]$mean, series = "TR13") +
+  autolayer(snaive.tempInt.1[[15]]$mean, series = "TR14") +
+  autolayer(snaive.tempInt.1[[16]]$mean, series = "TR15") + 
+  ggtitle("Temperatura interior SNAIVE 16 TRAINS") + 
+  theme_bw()+
+  labs(x = "time", y = "?C", color = element_blank())+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("snaiveTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+  
+```
+
+
+Para todos los cjtos de entramiento la predicci?n es la misma, esto es justo lo que hace el SNAIVE, propagar
+el ?ltimo d?a observado hacia el horizonte de predicciones.
+
+### RMSE Y MAPE
+```{r, dpi = 200}
+ggplot()+
+  geom_line(aes(x = accs.snaive.tempInt.1$TRAINS, y = accs.snaive.tempInt.1$RMSE,group = 1, colour = "Exp 1"))+
+   scale_x_discrete(limits=as.character(accs.snaive.tempInt.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE SNAIVE 16 TRAINS") +
+  labs(x = element_blank(),  y = "?C", color = element_blank()) +
+  theme(legend.position="none")+
+  ggsave("snaiveRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+
+
+ggplot()+
+  geom_line(aes(x = accs.snaive.tempInt.1$TRAINS, y = accs.snaive.tempInt.1$MAPE,group = 1, colour = "Exp 1"))+
+   scale_x_discrete(limits=as.character(accs.snaive.tempInt.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("MAPE error across 16 SNAIVE training periods for tempInt") +
+  labs(x = element_blank(),  y = "%", color = element_blank()) +
+  theme(legend.position="none")+
+  ggsave("snaiveMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+```
+
+# PROPHET
+## TEMPERATURA INTERIOR
+```{r}
+if(F){
+prophet.tempInt.1<-train_PROPHETs(listaTrainSets, "tempInt")
+saveRDS(prophet.tempInt.1, paste(route, "prophet.tempInt.1.rds", sep=""))
+prophet.tempInt.1.fcasts<-get_prophetFcasts(prophet.tempInt.1, 48*7)
+saveRDS(prophet.tempInt.1.fcasts, paste(route, "prophet.tempInt.1.fcasts.rds", sep=""))
+}
+accs.prophet.tempInt.1<-get_multiAccs_prophet(ts.multitrain.test%>% ts(start = 1, frequency = 48),
+                      prophet.tempInt.1.fcasts, "tempInt")
+```
+
+
+```{r,dpi = 200}
+ts.multitrain.test[, "tempInt"] %>% ts(start = 1, frequency = 48) %>% 
+autoplot() + 
+  autolayer(prophet.tempInt.1.fcasts[[1]], series = "TR0") +
+  autolayer(prophet.tempInt.1.fcasts[[2]], series = "TR1") +
+  autolayer(prophet.tempInt.1.fcasts[[3]], series = "TR2") +
+  autolayer(prophet.tempInt.1.fcasts[[4]], series = "TR3") +
+  autolayer(prophet.tempInt.1.fcasts[[5]], series = "TR4") +
+  autolayer(prophet.tempInt.1.fcasts[[6]], series = "TR5") +
+  autolayer(prophet.tempInt.1.fcasts[[7]], series = "TR6") +
+  autolayer(prophet.tempInt.1.fcasts[[8]], series = "TR7") +
+  autolayer(prophet.tempInt.1.fcasts[[9]], series = "TR8") +
+  autolayer(prophet.tempInt.1.fcasts[[10]], series = "TR9") +
+  autolayer(prophet.tempInt.1.fcasts[[11]], series = "TR10") +
+  autolayer(prophet.tempInt.1.fcasts[[12]], series = "TR11") +
+  autolayer(prophet.tempInt.1.fcasts[[13]], series = "TR12") +
+  autolayer(prophet.tempInt.1.fcasts[[14]], series = "TR13") +
+  autolayer(prophet.tempInt.1.fcasts[[15]], series = "TR14") +
+  autolayer(prophet.tempInt.1.fcasts[[16]], series = "TR15") + 
+  theme_bw()+
+  labs(x = "time", y = "?C", color = element_blank()) + ggtitle("Temperatura interior PROPHET")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("prophetTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r,dpi = 200}
+ts.multitrain.test[, "tempInt"] %>% ts(start = 1, frequency = 48) %>% 
+autoplot() + 
+  autolayer(prophet.tempInt.1.fcasts[[1]], series = "TR0") +
+  autolayer(prophet.tempInt.1.fcasts[[11]], series = "TR10", size = 3) +
+  autolayer(prophet.tempInt.1.fcasts[[16]], series = "TR15") + 
+  theme_bw()+
+  labs(x = "time", y = "?C", color = element_blank()) + ggtitle("Temperatura interior PROPHET")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("prophetTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+### RMSE Y MAPE
+```{r, dpi = 200}
+ggplot()+
+  geom_line(aes(x = accs.prophet.tempInt.1$TRAINS, y = accs.prophet.tempInt.1$RMSE,group = 1, colour = "Exp 1"))+
+  theme_bw()+
+   scale_x_discrete(limits=as.character(accs.prophet.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE PROPHET 16 TRAINS") +
+  labs(x = element_blank(),  y = "?C", color = element_blank()) +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggsave("prophetRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+
+ggplot()+
+  geom_line(aes(x = accs.prophet.tempInt.1$TRAINS, y = accs.prophet.tempInt.1$MAPE,group = 1, colour = "Exp 1"))+
+  theme_bw()+
+   scale_x_discrete(limits=as.character(accs.prophet.tempInt.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("MAPE PROPHET 16 TRAINS") +
+  labs(x = element_blank(),  y = "%", color = element_blank()) +
+  theme(legend.position="none")+
+  ggsave("prophetMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+```
+
+Prophet tiende mejorar muy lentamente una vez que ha conseguido una cantidad suficiente de datos, a partir del cjto TRAIN1-2. Encontramos embargo una ligera alteraci?n en forma de colina en los cjtos TRAIN2-6.
+
+Visualizamos los resultados a partir del TRAIN 6, para verificar que apenas hay cambios.
+```{r, dpi = 200}
+ts.multitrain.test[, "tempInt"] %>% ts(start = 1, frequency = 48) %>% 
+autoplot() + 
+  autolayer(prophet.tempInt.1.fcasts[[7]], series = "TRAIN6") +
+  autolayer(prophet.tempInt.1.fcasts[[8]], series = "TRAIN7") +
+  autolayer(prophet.tempInt.1.fcasts[[9]], series = "TRAIN8") +
+  autolayer(prophet.tempInt.1.fcasts[[10]], series = "TRAIN9") +
+  autolayer(prophet.tempInt.1.fcasts[[11]], series = "TRAIN10") +
+  autolayer(prophet.tempInt.1.fcasts[[12]], series = "TRAIN11") +
+  autolayer(prophet.tempInt.1.fcasts[[13]], series = "TRAIN12") +
+  autolayer(prophet.tempInt.1.fcasts[[14]], series = "TRAIN13") +
+  autolayer(prophet.tempInt.1.fcasts[[15]], series = "TRAIN14") +
+  autolayer(prophet.tempInt.1.fcasts[[16]], series = "TRAIN15") + 
+  labs(x = "time", y = "ºC") + ggtitle("Interior Pot Temperature PROPHET")
+```
+
+
+Me atrevo a decir que para todos las predicciones mostradas, utilizando los cjtos 6-15, las temperaturas m?ximas
+apenas sufren cambios, sin embargo las temperaturas m?nimas que se dan por la noche si que sufren alteraciones 
+y eso es justamente lo que provoca esa ligera mejor?a en el RMSE conforme se a?aden m?s d?as.
+
+
+El cjto ?ptimo de entramiento, podr?a ser el realmente cualquiera de los finales, que solo se diferencian minimamente en las predicciones que realizan en la noche.
+```{r,dpi = 200}
+ts.multitrain.test[, "tempInt"] %>% ts(start = 1, frequency = 48) %>% 
+autoplot() + 
+  autolayer(prophet.tempInt.1.fcasts[[3]], series = "TRAIN2") +
+  autolayer(prophet.tempInt.1.fcasts[[7]], series = "TRAIN6") +
+  autolayer(prophet.tempInt.1.fcasts[[8]], series = "TRAIN7") +
+  autolayer(prophet.tempInt.1.fcasts[[9]], series = "TRAIN8") +
+  autolayer(prophet.tempInt.1.fcasts[[10]], series = "TRAIN9") +
+  autolayer(prophet.tempInt.1.fcasts[[11]], series = "TRAIN10") +
+  autolayer(prophet.tempInt.1.fcasts[[12]], series = "TRAIN11") +
+  autolayer(prophet.tempInt.1.fcasts[[13]], series = "TRAIN12") +
+  autolayer(prophet.tempInt.1.fcasts[[14]], series = "TRAIN13") +
+  autolayer(prophet.tempInt.1.fcasts[[15]], series = "TRAIN14") +
+  autolayer(prophet.tempInt.1.fcasts[[16]], series = "TRAIN15") + 
+  labs(x = "time", y = "?C") + ggtitle("Temperatura interior PROPHET") +
+  theme_bw() +
+  theme(legend.position = "bottom")+
+  labs(color = element_blank()) + 
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("prophetTrainRevisited.jpg",
+         width = 10,
+         dpi = "print",
+         height = 6,
+         path = "./exportsPleiades")  
+```
+
+
+Pero he elegido TRAIN10 como soluaci?n de compromiso entre precisi?n y n? de d?as necesarios.
+
+# COMPARATIVA TOTAL 
+### RMSE
+```{r, dpi = 200}
+#RMSE
+cbind((accs.nnetars.tempInt.1$RMSE +
+       accs.nnetars.tempInt.2$RMSE +
+       accs.nnetars.tempInt.3$RMSE +
+       accs.nnetars.tempInt.4$RMSE)/4,
+     accs.arimas.tempInt.1$RMSE,
+     accs.snaive.tempInt.1$RMSE,
+     accs.tbats.tempInt.1$RMSE,+
+     accs.prophet.tempInt.1$RMSE) -> multiRMSE.tempInt
+
+cbind(multiRMSE.tempInt %>% as.data.frame(),
+      accs.prophet.tempInt.1$TRAINS) -> multiRMSE.tempInt
+
+colnames(multiRMSE.tempInt) <- c("NNETARs", "ARIMASs","SNAIVEs", "TBATSs", "PROPHETs", "TRAINS")
+
+
+ggplot()+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$NNETARs, group = 1, colour = "NNETARs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$ARIMASs, group = 1, colour = "ARIMAs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$SNAIVEs, group = 1, colour = "SNAIVEs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$TBATSs, group = 1, colour = "TBATs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$PROPHETs, group = 1, colour = "PROPHETs"))+
+  
+#  geom_point(aes(x = "TRAIN0", y = multiRMSE.tempInt$SNAIVEs[1], colour = "SNAIVEs"),size = 3)+
+#  geom_point(aes(x = "TRAIN0", y = multiRMSE.tempInt$TBATSs[1], colour = "TBATs"), size = 3)+
+#  geom_point(aes(x = "TRAIN1", y = multiRMSE.tempInt$ARIMASs[2], colour = "ARIMAs"), size = 3)+
+#  geom_point(aes(x = "TRAIN6", y = min(multiRMSE.tempInt$NNETARs), colour = "NNETARs"), size = 3)+
+#  geom_point(aes(x = "TRAIN10", y = multiRMSE.tempInt$PROPHETs[11], colour = "PROPHETs"), size = 3)+
+
+   scale_x_discrete(limits=as.character(multiRMSE.tempInt$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  theme(legend.position="bottom"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+
+  ggtitle("RMSE multiTRAIN") +
+  labs(x = element_blank(), y = "?C", color = element_blank()) +
+    ggsave("rmseOPT.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+```
+
+```{r}
+#RMSE
+cbind(accs.arimas.tempInt.1$RMSE,
+      accs.snaive.tempInt.1$RMSE,
+      accs.tbats.tempInt.1$RMSE,+
+      accs.prophet.tempInt.1$RMSE) -> multiRMSE.tempInt
+
+cbind(multiRMSE.tempInt %>% as.data.frame(),
+      accs.prophet.tempInt.1$TRAINS) -> multiRMSE.tempInt
+
+colnames(multiRMSE.tempInt) <- c("ARIMASs","SNAIVEs", "TBATSs", "PROPHETs", "TRAINS")
+
+
+ggplot()+
+  geom_ribbon(aes(x =  multiRMSE.tempInt$TRAINS,
+                  ymin = accs.nnetars.MAXMIN.RMSE$MAX, ymax = accs.nnetars.MAXMIN.RMSE$MIN,
+                  group = 1, color = "NNETARs"),
+              show.legend = F, fill = "darkkhaki", alpha = 0.5)+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$ARIMASs, group = 1, colour = "ARIMAs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$SNAIVEs, group = 1, colour = "SNAIVEs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$TBATSs, group = 1, colour = "TBATs"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$PROPHETs, group = 1, colour = "PROPHETs"))+
+
+   scale_x_discrete(limits=as.character(multiRMSE.tempInt$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  theme(legend.position="bottom"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+
+  ggtitle("RMSE multiTRAIN") +
+  labs(x = element_blank(), y = "ºC", color = element_blank()) +
+    ggsave("rmseOPT.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+```
+
+
+### MAPE
+```{r}
+#MAPE
+cbind((accs.nnetars.tempInt.1$MAPE +
+       accs.nnetars.tempInt.2$MAPE +
+       accs.nnetars.tempInt.3$MAPE +
+       accs.nnetars.tempInt.4$MAPE)/4,
+     accs.arimas.tempInt.1$MAPE,
+     accs.snaive.tempInt.1$MAPE,
+     accs.tbats.tempInt.1$MAPE,+
+     accs.prophet.tempInt.1$MAPE) -> multiMAPE.tempInt
+
+cbind(multiMAPE.tempInt %>% as.data.frame(),
+      accs.prophet.tempInt.1$TRAINS) -> multiMAPE.tempInt
+
+colnames(multiMAPE.tempInt) <- c("NNETARs", "ARIMASs","SNAIVEs", "TBATSs", "PROPHETs", "TRAINS")
+
+
+ggplot()+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$NNETARs, group = 1, colour = "NNETARs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$ARIMASs, group = 1, colour = "ARIMAs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$SNAIVEs, group = 1, colour = "SNAIVEs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$TBATSs, group = 1, colour = "TBATs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$PROPHETs, group = 1, colour = "PROPHETs"))+
+  
+#  geom_point(aes(x = "TRAIN0", y = multiMAPE.tempInt$SNAIVEs[1], colour = "SNAIVEs"),size = 3)+
+#  geom_point(aes(x = "TRAIN0", y = multiMAPE.tempInt$TBATSs[1], colour = "TBATs"), size = 3)+
+#  geom_point(aes(x = "TRAIN1", y = multiMAPE.tempInt$ARIMASs[2], colour = "ARIMAs"), size = 3)+
+#  geom_point(aes(x = "TRAIN6", y = min(multiMAPE.tempInt$NNETARs), colour = "NNETARs"), size = 3)+
+#  geom_point(aes(x = "TRAIN10", y = multiMAPE.tempInt$PROPHETs[11], colour = "PROPHETs"), size = 3)+
+  theme_bw()+
+   scale_x_discrete(limits=as.character(multiMAPE.tempInt$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0), legend.position="bottom") +
+  ggtitle("MAPE multiTRAIN") +
+  labs(x = element_blank(), y = "%", color = element_blank())+
+    ggsave("mapeOPT.tiff",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+
+```
+
+```{r}
+ggplot()+
+  geom_ribbon(aes(x =  multiRMSE.tempInt$TRAINS,
+                  ymin = accs.nnetars.MAXMIN.MAPE$MAX, ymax = accs.nnetars.MAXMIN.MAPE$MIN,
+                  group = 1, color = "NNETARs"),
+              show.legend = F, fill = "darkkhaki", alpha = 0.5)+
+#  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$NNETARs, group = 1, colour = "NNETARs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$ARIMASs, group = 1, colour = "ARIMAs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$SNAIVEs, group = 1, colour = "SNAIVEs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$TBATSs, group = 1, colour = "TBATs"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$PROPHETs, group = 1, colour = "PROPHETs"))+
+
+  theme_bw()+
+   scale_x_discrete(limits=as.character(multiMAPE.tempInt$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0), legend.position="bottom") +
+  ggtitle("MAPE multiTRAIN") +
+  labs(x = element_blank(), y = "%", color = element_blank())+
+    ggsave("mapeOPT.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+```
+
+* A la vista de los resultados se establecen  los siguientes periodos de entrenamiento.
+  + NNETAR: TRAIN6
+  + ARIMA: TRAIN1
+  + PROPHET: TRAIN10 
+  + SNAIVE: TRAIN0
+  + TBATS: TRAIN0
+
+<<<<<<< HEAD
+Podr?a ser interesante la posibilidad de a?adir varias versiones de algun modelo con diferentes periodos de 
+entrenamiento. De esta forma se mejora la robustez en caso de que alguna predicci?n no sea precisa.
+=======
+Podr?a ser interesante la posibilidad de a?adir varias versiones de algun modelo con diferentes periodos de 
+entrenamiento. De esta forma se mejora la robustez en caso de que alguna predicci?n no sea precisa.
+>>>>>>> 74db8b9d5edc497c2998cc6ff554c96deb26ae90
+
+```{r}
+optimunTL = list(
+                NNETAR = 105,#TRAIN6
+                ARIMA  = 30, #TRAIN1
+                PROPHET= 165, # TRAIN10
+                SNAIVE = 15,#TRAIN0
+                TBATS  = 15 #TRAIN0
+                )
+saveRDS(optimunTL, paste(route, "optimunTL.rds", sep=""))
+```
+
+
+```{r}
+cbind(
+  "NNETAR" = listaTrainSets$TRAIN6[,"tempInt"],
+  "ARIMA" = listaTrainSets$TRAIN1[,"tempInt"],
+  "PROPHET" = listaTrainSets$TRAIN10[,"tempInt"],
+  "SNAIVE" = listaTrainSets$TRAIN0[,"tempInt"],
+  "TBATS" = listaTrainSets$TRAIN0[,"tempInt"]
+  ) %>% 
+  autoplot(facets = T)  +
+    labs(x = "time (days)", y = "?C")+
+    theme_bw()+
+  ggsave("multiTrainNoInf.jpeg",
+         width = 11,
+         dpi = "print",
+         height = 6,
+         path = "./exportsPleiades") 
+
+```
+
+
+

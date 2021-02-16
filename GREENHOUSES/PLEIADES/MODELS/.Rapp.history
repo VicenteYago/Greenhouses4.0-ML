@@ -1,0 +1,6 @@
+load("/Users/vicenteyago/Desktop/TFG/repositorio/GREENHOUSES/PLEIADES/MODELS/nnetars.tempInt.2.rds")
+load("/Users/vicenteyago/Desktop/TFG/repositorio/GREENHOUSES/PLEIADES/MODELS/nnetars.tempInt.1.rds")
+load("/Users/vicenteyago/Desktop/TFG/repositorio/GREENHOUSES/PLEIADES/MODELS/fcasts.spr.tempInt.rds")
+load("/Users/vicenteyago/Desktop/TFG/repositorio/GREENHOUSES/PLEIADES/MODELS/fcasts.spr.rds")
+load("/Users/vicenteyago/Desktop/TFG/repositorio/GREENHOUSES/PLEIADES/MODELS/fcasts.aut.tempInt.rds")
+load("/Users/vicenteyago/Desktop/TFG/repositorio/GREENHOUSES/PLEIADES/MODELS/fcasts.aut.rds")

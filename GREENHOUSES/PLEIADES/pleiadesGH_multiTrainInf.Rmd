@@ -1,0 +1,833 @@
+---
+title: "nnetarTrainingExog"
+author: "Jose Vicente Yago Martinez"
+date: "5/8/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache =TRUE)
+```
+
+```{r}
+library(forecast)
+library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tsfeatures)
+library(tidyverse)
+library(ForecastComb)
+library(imputeTS)
+library(GGally)
+library(gridExtra)
+library(PerformanceAnalytics)
+
+source("../../GREENHOUSES/funciones/optimunTrainInf.R")
+
+freq.daily <- 48
+route  = "./MODELS/"
+route_proc = "../../DATA/DATA_UMU/PROC/"
+ts.daily <- paste(route_proc, "ts.daily.rds", sep="") %>%  readRDS()
+ts.daily.broken <- paste(route_proc, "ts.daily.broken.rds", sep="") %>%  readRDS()
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+```
+
+
+
+```{r}
+ts.daily[,"tempInt"] %>% autoplot(series = "FIXED") +
+  autolayer(ts.daily.broken[, "tempInt"], series = "ORIGINAL", na.rm = T) + 
+  labs(y = "ºC") + ggtitle("Temperatura interior") + theme_bw()
+```
+
+```{r}
+ts.daily[,"tempMac"] %>% autoplot(series = "FIXED") +
+  autolayer(ts.daily.broken[, "tempMac"], series = "ORIGINAL", na.rm = T) + 
+  labs(y = "ºC") + ggtitle("Temperatura interior") + theme_bw()
+  theme_bw()
+```
+
+```{r}
+ts.daily[,"tempExt"] %>% autoplot(series = "FIXED") +
+  autolayer(ts.daily.broken[, "tempExt"], series = "ORIGINAL", na.rm = T) + 
+  labs(x=element_blank(), y = "ºC", color = element_blank()) + ggtitle("Temperatura exterior 2018")+
+  theme_bw()+
+  geom_vline(aes(xintercept = 50))+
+  geom_vline(aes(xintercept = 290))+
+  theme(legend.position = "none")+
+  ggsave("tempExtCompInterp.jpg",
+         width = 10,
+         dpi = 200,
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+ts.daily[,"humExt.R"] %>% autoplot(series = "FIXED") +
+  autolayer(ts.daily.broken[, "humExt.R"], series = "ORIGINAL", na.rm = T) + 
+  labs(x=element_blank(), y = "%", color = element_blank()) + ggtitle("Humedad relativa exterior 2018")+
+  theme_bw()+
+  geom_vline(aes(xintercept = 50))+
+  geom_vline(aes(xintercept = 290))+
+  theme(legend.position = "none")+
+  ggsave("thumRExtCompInterp.jpg",
+         width = 10,
+         dpi = 200,
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+
+ts.daily[,"radExt"] %>% autoplot(series = "FIXED") +
+  autolayer(ts.daily.broken[, "radExt"], series = "ORIGINAL", na.rm = T) + 
+  labs(x="time(days)", y = "W/m²", color = element_blank()) + ggtitle("Radiación solar 2018")+
+  theme_bw()+
+  geom_vline(aes(xintercept = 50))+
+  geom_vline(aes(xintercept = 290))+
+  theme(legend.position = "bottom")+
+  ggsave("solarRadCompInterp.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+ts.multitrain <- window(ts.daily,  start = 50, end = 290)
+ts.multitrain.test <- tail(ts.multitrain, 7*48)
+ts.multitrain.train <- window(ts.multitrain, end = start(ts.multitrain.test)) 
+
+listaTrainSets   <- list(TRAIN0   = tail(ts.multitrain.train, 15*1*48),
+                         TRAIN1   = tail(ts.multitrain.train, 15*2*48),
+                         TRAIN2   = tail(ts.multitrain.train, 15*3*48),
+                         TRAIN3   = tail(ts.multitrain.train, 15*4*48),
+                         TRAIN4   = tail(ts.multitrain.train, 15*5*48),
+                         TRAIN5   = tail(ts.multitrain.train, 15*6*48),
+                         TRAIN6   = tail(ts.multitrain.train, 15*7*48),
+                         TRAIN7   = tail(ts.multitrain.train, 15*8*48),
+                         TRAIN8   = tail(ts.multitrain.train, 15*9*48),
+                         TRAIN9   = tail(ts.multitrain.train, 15*10*48),
+                         TRAIN10  = tail(ts.multitrain.train, 15*11*48),
+                         TRAIN11  = tail(ts.multitrain.train, 15*12*48),
+                         TRAIN12  = tail(ts.multitrain.train, 15*13*48),
+                         TRAIN13  = tail(ts.multitrain.train, 15*14*48),
+                         TRAIN14  = tail(ts.multitrain.train, 15*15*48),
+                         TRAIN15  = tail(ts.multitrain.train, 15*16*48))
+```
+
+
+
+# NNETARS
+## TEMPERATURA INTERIOR
+
+```{r}
+exog_vars = c("tempExt", "humExt.R", "radExt")
+```
+
+
+La red neuronal no soporta un conjunto de entremamiento mayor al de listaTrainSets[[13]], en el 14 lanza un error por tener 
+demasiados pesos.
+```{r}
+#EXPERIMENTO 1 OK
+if(F){
+nnetars.tempIntExog.1<-train_NNs_exog(listaTrainSets %>% head(13),
+                                        pred = "tempInt",
+                                        exog_var = exog_vars)
+saveRDS(nnetars.tempIntExog.1, paste(route, "nnetars.tempIntExog.1.rds", sep=""))
+nnetars.tempIntExog.1.fcasts<-get_multiFcasts_exog(models = nnetars.tempIntExog.1,
+                                                   testSet = ts.multitrain.test, 
+                                                   h = 7, 
+                                                   freq = 48, 
+                                                   exog_var = exog_vars)
+saveRDS(nnetars.tempIntExog.1.fcasts, paste(route, "nnetars.tempIntExog.1.fcasts.rds", sep=""))
+}
+
+nnetars.tempIntExog.1 <- paste(route, "nnetars.tempIntExog.1.rds", sep="") %>%  readRDS()
+nnetars.tempIntExog.1.fcasts <- paste(route, "nnetars.tempIntExog.1.fcasts.rds", sep="") %>%  readRDS()
+
+nnetars.tempIntExog.1.fcasts[[toString(14)]]$mean <- rep(NA,length(nnetars.tempIntExog.1.fcasts[[toString(13)]]$mean))
+nnetars.tempIntExog.1.fcasts[[toString(15)]]$mean <- rep(NA,length(nnetars.tempIntExog.1.fcasts[[toString(13)]]$mean))
+nnetars.tempIntExog.1.fcasts[[toString(16)]]$mean <- rep(NA,length(nnetars.tempIntExog.1.fcasts[[toString(13)]]$mean))
+accs.nnetars.tempIntExog.1 <- get_multiAccs(ts.multitrain.test, nnetars.tempIntExog.1.fcasts, "tempInt")
+
+#EXPERIMENTO 2 OK
+if(F){
+nnetars.tempIntExog.2<-train_NNs_exog(listaTrainSets %>% head(13),
+                                      pred = "tempInt",
+                                      exog_var = exog_vars)
+saveRDS(nnetars.tempIntExog.2, paste(route, "nnetars.tempIntExog.2.rds", sep=""))
+nnetars.tempIntExog.2.fcasts<-get_multiFcasts_exog(models = nnetars.tempIntExog.2,
+                                                   testSet = ts.multitrain.test, 
+                                                   h = 7, 
+                                                   freq = 48, 
+                                                   exog_var = exog_vars)
+saveRDS(nnetars.tempIntExog.2.fcasts, paste(route, "nnetars.tempIntExog.2.fcasts.rds", sep=""))
+}
+nnetars.tempIntExog.2 <- paste(route, "nnetars.tempIntExog.2.rds", sep="") %>%  readRDS()
+nnetars.tempIntExog.2.fcasts <- paste(route, "nnetars.tempIntExog.2.fcasts.rds", sep="") %>%  readRDS()
+
+nnetars.tempIntExog.2.fcasts[[toString(14)]]$mean <- rep(NA,length(nnetars.tempIntExog.2.fcasts[[toString(13)]]$mean))
+nnetars.tempIntExog.2.fcasts[[toString(15)]]$mean <- rep(NA,length(nnetars.tempIntExog.2.fcasts[[toString(13)]]$mean))
+nnetars.tempIntExog.2.fcasts[[toString(16)]]$mean <- rep(NA,length(nnetars.tempIntExog.2.fcasts[[toString(13)]]$mean))
+accs.nnetars.tempIntExog.2 <- get_multiAccs(ts.multitrain.test, nnetars.tempIntExog.2.fcasts, "tempInt")
+```
+
+
+### RMSE Y MAPE
+
+```{r}
+ggplot()+
+  geom_line(aes(x = accs.nnetars.tempIntExog.1$TRAINS, y = accs.nnetars.tempIntExog.1$RMSE,group = 1, colour = "Exp 1"))+
+  geom_line(aes(x = accs.nnetars.tempIntExog.2$TRAINS, y = accs.nnetars.tempIntExog.2$RMSE,group = 1, colour = "Exp 2"))+
+  theme_bw()+
+  scale_x_discrete(limits=as.character( accs.nnetars.tempIntExog.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE NNETAR 13 TRAINS") +
+  labs(x = element_blank(), y = "ÂºC") +
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggsave("nnetarxRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+
+ggplot()+
+  geom_line(aes(x = accs.nnetars.tempIntExog.1$TRAINS, y = accs.nnetars.tempIntExog.1$MAPE,group = 1, colour = "Exp 1"))+
+  geom_line(aes(x = accs.nnetars.tempIntExog.2$TRAINS, y = accs.nnetars.tempIntExog.2$MAPE,group = 1, colour = "Exp 2"))+
+  theme_bw() + 
+  scale_x_discrete(limits=as.character( accs.nnetars.tempIntExog.1$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0),legend.position = "bottom") +
+  ggtitle("MAPE NNETAR 13 TRAINS") +
+  labs(x = element_blank(), y = "%", color = element_blank()) +
+  ggsave("nnetarxMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+Desde TRAIN3 parece que la red neuronal se estabiliza, mejorando el RMSE muy poco a poco.
+
+Visualizemos los forecasts:
+
+```{r}
+((sapply(nnetars.tempIntExog.1.fcasts, '[[', "mean") + 
+ sapply(nnetars.tempIntExog.2.fcasts, '[[', "mean"))/2) %>%
+  ts(frequency = 48, 
+     start = (nnetars.tempIntExog.1.fcasts$`1`$mean %>% start)) -> nnetars.tempIntExog.mean.fcasts
+
+```
+
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempIntExog.mean.fcasts[,1], series = "TR0") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,2], series = "TR1") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,3], series = "TR2") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,4], series = "TR3") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,5], series = "TR4") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,6], series = "TR5") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,7], series = "TR6") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,8], series = "TR7") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,9], series = "TR8") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,10], series = "TR9") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,11], series = "TR10") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,12], series = "TR11") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,13], series = "TR12") +
+  ylab("ºC") + ggtitle("Temperatura interior NNETAR 14 TRAINS [MEDIA 2 EXPERIMENTOS]") +
+  theme_bw()+
+  labs(y = "ºC",color = element_blank())+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("nnetarxTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempIntExog.mean.fcasts[,1], series = "TR0") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,4], series = "TR3", size = 2) +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,13], series = "TR12") +
+  ylab("ºC") + ggtitle("Temperatura interior NNETAR 14 TRAINS [MEDIA 2 EXPERIMENTOS]") +
+  theme_bw()+
+  labs(x = "time", y = "ºC",color = element_blank())+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("nnetarxTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+TRAIN0-1 tiene a exagerar las temperaturas máximas, sin embargo a simple vista las mínimas son bastante parecidas con todos los conjuntos.
+
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempIntExog.mean.fcasts[,1], series = "TR0") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,2], series = "TR1") +
+  ylab("ºC")+
+  theme_bw()+
+  labs(x = "time", y = "ºC",color = element_blank())+
+  guides(col = guide_legend(ncol = 1))+
+  ggsave("nnetarxTrain1_2.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempIntExog.mean.fcasts[,11], series = "TR10") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,12], series = "TR11") +
+  autolayer(nnetars.tempIntExog.mean.fcasts[,13], series = "TR12") +
+  ylab("ºC") +
+  theme_bw()+
+  labs(x = "time", y = "ºC",color = element_blank())+
+  guides(col = guide_legend(ncol = 1))+
+  ggsave("nnetarxTrain_10_11_12.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(nnetars.tempIntExog.mean.fcasts[,4], series = "TR3") +
+  ylab("ºC")+
+  theme_bw()+
+  labs(x = "time", y = "ºC",color = element_blank())+
+  guides(col = guide_legend(ncol = 1))+
+  ggsave("nnetarxTrain_3.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+# ARIMAS
+## TEMPERATURA INTERIOR
+```{r}
+if(F){
+arimas.tempIntExog.1 <- train_ARIMAs_exog(listaTrainSets,
+                                          pred = "tempInt",
+                                          exog_var = exog_vars)
+saveRDS(arimas.tempIntExog.1, paste(route, "arima.tempIntExog.1.rds", sep=""))
+arimas.tempIntExog.1.fcasts<-get_multiFcasts_exog(arimas.tempIntExog.1,
+                                              testSet = ts.multitrain.test,
+                                              h = 48,
+                                              freq = 7,
+                                              exog_var = exog_vars)
+saveRDS(arimas.tempIntExog.1.fcasts, paste(route, "arimas.tempIntExog.1.fcasts.rds", sep=""))
+}
+arimas.tempIntExog.1 <- paste(route, "arima.tempIntExog.1.rds", sep="") %>%  readRDS()
+arimas.tempIntExog.1.fcasts <- paste(route, "arimas.tempIntExog.1.fcasts.rds", sep="") %>%  readRDS()
+accs.arimas.tempIntExog.1 <- get_multiAccs(ts.multitrain.test,  arimas.tempIntExog.1.fcasts, "tempInt")
+```
+
+###RMSE Y MAPE
+```{r}
+ggplot()+
+  geom_line(aes(x = accs.arimas.tempIntExog.1$TRAINS, y = accs.arimas.tempIntExog.1$RMSE, group = 1, colour = "Exp 1"))+
+  scale_x_discrete(limits=as.character( accs.arimas.tempIntExog.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE error across 16 SARIMAX training periods for tempInt") +
+  labs(x = element_blank(), y = "ÂºC", color = element_blank())+
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggsave("arimaxRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+
+
+ggplot()+
+  geom_line(aes(x = accs.arimas.tempIntExog.1$TRAINS, y = accs.arimas.tempIntExog.1$MAPE, group = 1, colour = "Exp 1"))+
+  scale_x_discrete(limits=as.character( accs.arimas.tempIntExog.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0),legend.position = "none") +
+  ggtitle("MAPE error across 16 SARIMAX training periods for tempInt") +
+  labs(x = element_blank(), y = "%", color = element_blank())+
+  ggsave("arimaxMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+Parece que la información extra que maneja el ARIMA le hace necesitar un nº de días máximo muy superior a su versión no informada,
+TRAIN1 (30 días), hasta que empieza a estabilizarse a partir de TRAIN9 (150 días)
+
+
+Visualicemos las predicciones:
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(arimas.tempIntExog.1.fcasts[[1]]$mean, series = "TR0")+
+  autolayer(arimas.tempIntExog.1.fcasts[[2]]$mean, series = "TR1")+
+  autolayer(arimas.tempIntExog.1.fcasts[[3]]$mean, series = "TR2")+
+  autolayer(arimas.tempIntExog.1.fcasts[[4]]$mean, series = "TR3")+
+  autolayer(arimas.tempIntExog.1.fcasts[[5]]$mean, series = "TR4")+
+  autolayer(arimas.tempIntExog.1.fcasts[[6]]$mean, series = "TR5")+
+  autolayer(arimas.tempIntExog.1.fcasts[[7]]$mean, series = "TR6")+
+  autolayer(arimas.tempIntExog.1.fcasts[[8]]$mean, series = "TR7")+
+  autolayer(arimas.tempIntExog.1.fcasts[[9]]$mean, series = "TR8")+
+  autolayer(arimas.tempIntExog.1.fcasts[[10]]$mean, series = "TR9") +
+  autolayer(arimas.tempIntExog.1.fcasts[[11]]$mean, series = "TR10")+
+  autolayer(arimas.tempIntExog.1.fcasts[[12]]$mean, series = "TR11")+
+  autolayer(arimas.tempIntExog.1.fcasts[[13]]$mean, series = "TR12")+
+  autolayer(arimas.tempIntExog.1.fcasts[[14]]$mean, series = "TR13")+
+  autolayer(arimas.tempIntExog.1.fcasts[[15]]$mean, series = "TR14")+
+  autolayer(arimas.tempIntExog.1.fcasts[[16]]$mean, series = "TR15") +
+  theme_bw()+
+  labs(x = "time", y = "ºC",color = element_blank()) + ggtitle("Temperatura interior ARIMA 16 TRAINS")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("arimaxTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(arimas.tempIntExog.1.fcasts[[1]]$mean, series = "TR0")+
+  autolayer(arimas.tempIntExog.1.fcasts[[10]]$mean, series = "TR9", size = 2)+
+  autolayer(arimas.tempIntExog.1.fcasts[[16]]$mean, series = "TR15") +
+  theme_bw()+
+  labs(x = "time", y = "ºC",color = element_blank()) + ggtitle("Temperatura interior ARIMA 16 TRAINS")+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("arimaxTrainSelecction.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+Para empezar es muy llamativo ese subconjunto de TRAINs iniciales en los que el rendimiento del ARIMA es pésimo:
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(arimas.tempIntExog.1.fcasts[[1]]$mean, series = "TRAIN0")+
+  autolayer(arimas.tempIntExog.1.fcasts[[2]]$mean, series = "TRAIN1")+
+  autolayer(arimas.tempIntExog.1.fcasts[[3]]$mean, series = "TRAIN2")+
+  autolayer(arimas.tempIntExog.1.fcasts[[4]]$mean, series = "TRAIN3")+
+  autolayer(arimas.tempIntExog.1.fcasts[[5]]$mean, series = "TRAIN4")+
+  autolayer(arimas.tempIntExog.1.fcasts[[6]]$mean, series = "TRAIN5")+
+  autolayer(arimas.tempIntExog.1.fcasts[[7]]$mean, series = "TRAIN6")+
+  ylab("ÂºC")
+```
+
+Ahora veamos con más detenimiento los TRAINS donde se comporta mejor
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"]) + 
+  autolayer(arimas.tempIntExog.1.fcasts[[10]]$mean, series = "TRAIN9") +
+  autolayer(arimas.tempIntExog.1.fcasts[[11]]$mean, series = "TRAIN10")+
+  autolayer(arimas.tempIntExog.1.fcasts[[12]]$mean, series = "TRAIN11")+
+  autolayer(arimas.tempIntExog.1.fcasts[[13]]$mean, series = "TRAIN12")+
+  autolayer(arimas.tempIntExog.1.fcasts[[14]]$mean, series = "TRAIN13")+
+  autolayer(arimas.tempIntExog.1.fcasts[[15]]$mean, series = "TRAIN14")+
+  autolayer(arimas.tempIntExog.1.fcasts[[16]]$mean, series = "TRAIN15") +
+  ylab("ÂºC") + ggtitle("ARIMA Interior temperature")
+```
+
+Efectivamente despues del TRAIN9, el algoritmo se ha estabilizado y da igual cuantos días más añadamos, no alteraremos la 
+precisión de la predicción, es inmediato resolver que usaremos el cjto que requiera menos días TRAIN9.
+
+
+
+# PROPHET
+## TEMPERATURA INTERIOR
+
+```{r}
+if(F){
+prophet.tempIntExog.1 <- train_PROPHETs_exog(lTrains = listaTrainSets,
+                                             tests = ts.multitrain.test,
+                                             pred = "tempInt",
+                                             exog_var = exog_vars )
+saveRDS(prophet.tempIntExog.1, paste(route, "prophet.tempIntExog.1.rds", sep=""))
+prophet.tempIntExog.1.fcasts<-get_prophetFcasts(prophet.tempIntExog.1, 48*7)
+saveRDS(prophet.tempIntExog.1.fcasts, paste(route, "prophet.tempIntExog.1.fcasts.rds", sep=""))
+}
+prophet.tempIntExog.1 <- paste(route, "prophet.tempIntExog.1.rds", sep="") %>%  readRDS()
+prophet.tempIntExog.1.fcasts <- paste(route, "prophet.tempIntExog.1.fcasts.rds", sep="") %>%  readRDS()
+
+
+accs.prophet.tempIntExog.1 <- get_multiAccs_prophet(ts.multitrain.test%>% ts(start = 1, frequency = 48),
+                                                  prophet.tempIntExog.1.fcasts, "tempInt")
+```
+
+###RMSE Y MAPE
+```{r}
+ggplot()+
+  geom_line(aes(x = accs.prophet.tempIntExog.1$TRAINS, y = accs.prophet.tempIntExog.1$RMSE,group = 1, colour = "Exp 1"))+
+   scale_x_discrete(limits=as.character(accs.prophet.tempIntExog.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  ggtitle("RMSE error across 16 PROPHET training periods for tempInt") +
+  labs(x = element_blank(), y = "ºC", color = element_blank())+
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+  ggsave("prophetxRMSE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+
+ggplot()+
+  geom_line(aes(x = accs.prophet.tempIntExog.1$TRAINS, y = accs.prophet.tempIntExog.1$MAPE,group = 1, colour = "Exp 1"))+
+   scale_x_discrete(limits=as.character(accs.prophet.tempIntExog.1$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0), legend.position = "none") +
+  ggtitle("MAPE error across 16 PROPHET training periods for tempInt") +
+  labs(x = element_blank(), y = "%", color = element_blank()) +
+  ggsave("prophetxMAPE.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+Parece extraño que el mejor RMSE se haya optenido con TRAIN3 y lejos de mejorar, empeora rápidamente para después recuperarse poco
+a poco sin llegar a recuperar la precisión de TRAIN3.
+
+Visualizemos las predicciones
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"] %>% ts(frequency = 48)) + 
+  autolayer(prophet.tempIntExog.1.fcasts[[1]], series = "TR0") +
+  autolayer(prophet.tempIntExog.1.fcasts[[2]], series = "TR1") +
+  autolayer(prophet.tempIntExog.1.fcasts[[3]], series = "TR2") +
+  autolayer(prophet.tempIntExog.1.fcasts[[4]], series = "TR3") +
+  autolayer(prophet.tempIntExog.1.fcasts[[5]], series = "TR4") + 
+  autolayer(prophet.tempIntExog.1.fcasts[[6]], series = "TR5") +
+  autolayer(prophet.tempIntExog.1.fcasts[[7]], series = "TR6") +
+  autolayer(prophet.tempIntExog.1.fcasts[[8]], series = "TR7") +
+  autolayer(prophet.tempIntExog.1.fcasts[[9]], series = "TR8") +
+  autolayer(prophet.tempIntExog.1.fcasts[[10]], series = "TR9") + 
+  autolayer(prophet.tempIntExog.1.fcasts[[11]], series = "TR10") +
+  autolayer(prophet.tempIntExog.1.fcasts[[12]], series = "TR11") +
+  autolayer(prophet.tempIntExog.1.fcasts[[13]], series = "TR12") +
+  autolayer(prophet.tempIntExog.1.fcasts[[14]], series = "TR13") +
+  autolayer(prophet.tempIntExog.1.fcasts[[15]], series = "TR14") +
+  autolayer(prophet.tempIntExog.1.fcasts[[16]], series = "TR15") +
+  labs(y = "ºC", x = element_blank(), color = element_blank()) + ggtitle("Temperatura interior PROPHET 16 TRAINS") +
+  theme_bw()+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("prophetxTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"] %>% ts(frequency = 48)) + 
+  autolayer(prophet.tempIntExog.1.fcasts[[1]], series = "TR0") +
+  autolayer(prophet.tempIntExog.1.fcasts[[4]], series = "TR3", size = 2) +
+  autolayer(prophet.tempIntExog.1.fcasts[[16]], series = "TR15") +
+  labs(y = "ºC", x = element_blank(), color = element_blank()) + ggtitle("Temperatura interior PROPHET 16 TRAINS") +
+  theme_bw()+
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 2))+
+  ggsave("prophetxTrain.jpg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+Los resultados obtenidos se parecen mucho, con pequeñas fluctuaciones en algunos puntos máximos y mínimos.
+
+Observemos si realmente hay diferencia entre TRAIN3 y  los conjuntos más grandes
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"] %>% ts(frequency = 48)) + 
+  autolayer(prophet.tempIntExog.1.fcasts[[4]], series = "TRAIN3") +
+  autolayer(prophet.tempIntExog.1.fcasts[[11]], series = "TRAIN10") +
+  autolayer(prophet.tempIntExog.1.fcasts[[12]], series = "TRAIN11") +
+  autolayer(prophet.tempIntExog.1.fcasts[[13]], series = "TRAIN12") +
+  autolayer(prophet.tempIntExog.1.fcasts[[14]], series = "TRAIN13") +
+  autolayer(prophet.tempIntExog.1.fcasts[[15]], series = "TRAIN14") +
+  autolayer(prophet.tempIntExog.1.fcasts[[16]], series = "TRAIN15") +
+  ylab("ºC") + ggtitle("PROPHET Interior temperature")
+```
+
+Realmente TRAIN3 se distingue de los demás pero a peor, ya que en los últimos días falla más que el resto. Realmente el caso es muy parecido al de la red neuronal comentada anteriormente porque la diferencia entre TRAIN3 y las demás opciones es muy grande.
+Pese a que PROPHET es un modelo relativamente poco costoso computacionalmente, ser dependiente de un gran nº de dias para entrenar
+siempre es un problema, porque si se diera el caso de etapas sin información, esta situación afectaría a más entrenamientos posteriores. Por lo tanto vuelvo a seleccionar a TRAIN3, pero esta vez para PROPHET.
+
+```{r}
+autoplot(ts.multitrain.test[, "tempInt"] %>% ts(frequency = 48)) + 
+  autolayer(prophet.tempIntExog.1.fcasts[[4]], series = "TRAIN3") +
+  autolayer(prophet.tempIntExog.1.fcasts[[11]], series = "TRAIN10")+
+  ylab("ªC") + ggtitle("PROPHET Interior temperature")
+```
+
+
+
+# COMPARATIVA TOTAL
+
+##RMSE
+```{r}
+cbind(accs.nnetars.tempIntExog.1$RMSE,
+      accs.arimas.tempIntExog.1$RMSE,
+      accs.prophet.tempIntExog.1$RMSE) -> multiRMSEExog.tempInt
+
+cbind(multiRMSEExog.tempInt %>% as.data.frame(),
+      accs.prophet.tempIntExog.1$TRAINS) -> multiRMSEExog.tempInt
+
+colnames(multiRMSEExog.tempInt) <- c("NNETARs", "ARIMASs","PROPHETs", "TRAINS")
+
+
+ggplot()+
+  geom_line(aes(x = multiRMSEExog.tempInt$TRAINS, y = multiRMSEExog.tempInt$NNETARs, group = 1, colour = "NNETARs"))+
+  geom_line(aes(x = multiRMSEExog.tempInt$TRAINS, y = multiRMSEExog.tempInt$ARIMASs, group = 1, colour = "ARIMAs"))+
+  geom_line(aes(x = multiRMSEExog.tempInt$TRAINS, y = multiRMSEExog.tempInt$PROPHETs, group = 1, colour = "PROPHETs"))+
+  
+#  geom_point(aes(x = "TRAIN3", y = multiRMSEExog.tempInt$NNETARs[4], group = 1, colour = "NNETARs"), size = 3)+
+#  geom_point(aes(x = "TRAIN9", y = multiRMSEExog.tempInt$ARIMASs[10], group = 1, colour = "ARIMAs"), size = 3)+
+#  geom_point(aes(x = "TRAIN3", y = multiRMSEExog.tempInt$PROPHETs[4], group = 1, colour = "PROPHETs"), size = 3)+ 
+  
+   scale_x_discrete(limits=as.character(multiRMSEExog.tempInt$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) +
+  theme(legend.position="bottom"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  ggtitle("RMSE error across 16 training periods for tempInt for all models") +
+    labs(x = element_blank(), y = "ºC", color = element_blank()) +
+  ggsave("rmsexOPT.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades") 
+```
+
+## MAPE
+```{r}
+cbind(accs.nnetars.tempIntExog.1$MAPE,
+      accs.arimas.tempIntExog.1$MAPE,
+      accs.prophet.tempIntExog.1$MAPE) -> multiMAPEExog.tempInt
+
+cbind(multiMAPEExog.tempInt %>% as.data.frame(),
+      accs.prophet.tempIntExog.1$TRAINS) -> multiMAPEExog.tempInt
+
+colnames(multiMAPEExog.tempInt) <- c("NNETARs", "ARIMASs","PROPHETs", "TRAINS")
+
+
+ggplot()+
+  geom_line(aes(x = multiMAPEExog.tempInt$TRAINS, y = multiMAPEExog.tempInt$NNETARs, group = 1, colour = "NNETARs"))+
+  geom_line(aes(x = multiMAPEExog.tempInt$TRAINS, y = multiMAPEExog.tempInt$ARIMASs, group = 1, colour = "ARIMAs"))+
+  geom_line(aes(x = multiMAPEExog.tempInt$TRAINS, y = multiMAPEExog.tempInt$PROPHETs, group = 1, colour = "PROPHETs"))+
+  
+#  geom_point(aes(x = "TRAIN3", y = multiMAPEExog.tempInt$NNETARs[4], group = 1, colour = "NNETARs"), size = 3)+
+#  geom_point(aes(x = "TRAIN9", y = multiMAPEExog.tempInt$ARIMASs[10], group = 1, colour = "ARIMAs"), size = 3)+
+#  geom_point(aes(x = "TRAIN3", y = multiMAPEExog.tempInt$PROPHETs[4], group = 1, colour = "PROPHETs"), size = 3)+ 
+  theme_bw()+
+   scale_x_discrete(limits=as.character(multiMAPEExog.tempInt$TRAINS))+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0), legend.position = "bottom") +
+  ggtitle("MAPE error across 16 training periods for tempInt for all models") +
+  labs(x = element_blank(), y = "%", color = element_blank())+
+  ggsave("mapexOPT.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+
+```
+
+```{r}
+
+cbind(SNAIVE = snaive.tempInt.1[[1]]$mean %>%  ts(frequency = 48),
+      ARIMA = arimas.tempIntExog.1.fcasts[[11]]$mean %>%  ts(frequency = 48),
+      NNETAR = nnetars.tempIntExog.1.fcasts[[11]]$mean %>% ts(frequency = 48),
+      PROPHET = prophet.tempIntExog.1.fcasts[[3]],
+      COMB = (prophet.tempIntExog.1.fcasts[[11]] + 
+              arimas.tempIntExog.1.fcasts[[11]]$mean %>%  ts(frequency = 48) + 
+              nnetars.tempIntExog.1.fcasts[[11]]$mean %>% ts(frequency = 48))/3
+      ) -> SERIES
+
+
+autoplot(ts.multitrain.test[, "tempInt"] %>% ts(frequency = 48)) + 
+  autolayer(SERIES[, "SNAIVE"], series = "TRAINo SNAIVE") +
+  autolayer(SERIES[, "ARIMA"], series = "TRAIN10 ARIMA") +
+  autolayer(SERIES[, "NNETAR"], series = "TRAIN10 NNETAR") +
+  autolayer(SERIES[, "PROPHET"], series = "TRAIN10 PROPHET") +
+  autolayer(SERIES[, "COMB"], series = "TRAIN10 COMB") +
+  ylab("ÂºC") + ggtitle("PROPHET Interior temperature")
+```
+
+
+A la vista de los resultados se despinde de los siguientes periodos de entrenamiento para método.(MAPE)
+
+NNETAR: TRAIN3
+ARIMA: TRAIN9
+PROPHET: TRAIN3 
+
+
+```{r}
+optimunTL.exog = list(
+                NNETAR = 60, #TRAIN3
+                ARIMA  = 150,  #TRAIN9
+                PROPHET= 60, #TRAIN3
+                #----------------------#
+                SNAIVE = 1,
+                TBATS = 1
+                )
+saveRDS(optimunTL.exog, paste(route, "optimunTL.exog.rds", sep=""))
+```
+
+
+```{r}
+cbind(
+  "NNETAR" = listaTrainSets$TRAIN3[,"tempInt"],
+  "ARIMA" = listaTrainSets$TRAIN9[,"tempInt"],
+  "PROPHET" = listaTrainSets$TRAIN3[,"tempInt"]
+  ) %>% 
+  autoplot(facets = T)  +
+    labs(x = "time (days)", y = "ºC")+
+    theme_bw()+
+  ggsave("multiTrainInf.jpeg",
+         width = 11,
+         dpi = "print",
+         height = 6,
+         path = "./exportsPleiades") 
+
+```
+
+
+
+#COMPARATIVA
+
+```{r}
+ggplot()+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$NNETARs, group = 1, color = "NNETAR"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$ARIMASs, group = 1, color = "ARIMA"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$SNAIVEs, group = 1, color = "SNAIVE"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$TBATSs,  group = 1, color = "TBATS"))+
+  geom_line(aes(x = multiRMSE.tempInt$TRAINS, y = multiRMSE.tempInt$PROPHETs,group = 1, color = "PROPHET"))+
+  
+  geom_line(aes(x = multiRMSEExog.tempInt$TRAINS,
+                y = multiRMSEExog.tempInt$NNETARs, group = 1 ,color = "NNETARX"), linetype = "dashed", ) +
+  
+  geom_line(aes(x = multiRMSEExog.tempInt$TRAINS,
+                y = multiRMSEExog.tempInt$ARIMASs, group = 1, color = "ARIMAX"), linetype = "dashed") +
+  
+  geom_line(aes(x = multiRMSEExog.tempInt$TRAINS,
+                y = multiRMSEExog.tempInt$PROPHETs, group = 1, color = "PROPHETX"), linetype = "dashed") +
+  scale_x_discrete(limits=as.character(multiRMSEExog.tempInt$TRAINS))+
+  theme_bw()+
+  theme(legend.position="none",
+        axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())+
+
+  
+      scale_colour_manual(values  = 
+                          c('NNETAR'   =  'firebrick',
+                            'NNETARX'   =  'firebrick',
+                            'ARIMA'   =  'mediumpurple1',
+                            'ARIMAX'     =  'mediumpurple1',
+                            'PROPHET'    =  'orange',
+                            'PROPHETX'    =  'orange',
+                            'SNAIVE'     =  'blue',
+                            'TBATS'    =  'green'))+  
+  
+  scale_linetype_manual(labels = c("ARIMA", "ARIMAX", "NNETAR", "NNETARX",
+                                   "PROPHET", "PROPHETX", "SNAIVE", "TBATS") ,
+                        values = c("ARIMA" = 1, "ARIMAX" = 2, "NNETAR" = 1, "NNETARX" = 2,
+                                   "PROPHET" = 1, "PROPHETX" = 2, "SNAIVE" = 1, "TBATS" = 1))+
+  
+  ggtitle("RMSE error across 16 training periods for tempInt for all models") +
+  labs(x = "Training sets", y = "ÂºC", colour = element_blank()) +
+  ggsave("RMSES.jpg",
+         width = 10,
+         dpi = "print",
+         height = 6,
+         path = "./exportsPleiades") 
+```
+
+```{r}
+ggplot()+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$NNETARs, group = 1, color = "NNETAR"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$ARIMASs, group = 1, color = "ARIMA"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$SNAIVEs, group = 1, color = "SNAIVE"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$TBATSs,  group = 1, color = "TBATS"))+
+  geom_line(aes(x = multiMAPE.tempInt$TRAINS, y = multiMAPE.tempInt$PROPHETs,group = 1, color = "PROPHET"))+
+  
+  geom_line(aes(x = multiMAPEExog.tempInt$TRAINS,
+                y = multiMAPEExog.tempInt$NNETARs, group = 1 ,color = "NNETARX"), linetype = "dashed", ) +
+  
+  geom_line(aes(x = multiMAPEExog.tempInt$TRAINS,
+                y = multiMAPEExog.tempInt$ARIMASs, group = 1, color = "ARIMAX"), linetype = "dashed") +
+  
+  geom_line(aes(x = multiMAPEExog.tempInt$TRAINS,
+                y = multiMAPEExog.tempInt$PROPHETs, group = 1, color = "PROPHETX"), linetype = "dashed") +
+  scale_x_discrete(limits=as.character(multiMAPEExog.tempInt$TRAINS))+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0),
+        legend.position = "bottom") +
+
+  
+      scale_colour_manual(values  = 
+                          c('NNETAR'   =  'firebrick',
+                            'NNETARX'   =  'firebrick',
+                            'ARIMA'   =  'mediumpurple1',
+                            'ARIMAX'     =  'mediumpurple1',
+                            'PROPHET'    =  'orange',
+                            'PROPHETX'    =  'orange',
+                            'SNAIVE'     =  'blue',
+                            'TBATS'    =  'green'))+  
+  
+  scale_linetype_manual(labels = c("ARIMA", "ARIMAX", "NNETAR", "NNETARX",
+                                   "PROPHET", "PROPHETX", "SNAIVE", "TBATS") ,
+                        values = c("ARIMA" = 1, "ARIMAX" = 2, "NNETAR" = 1, "NNETARX" = 2,
+                                   "PROPHET" = 1, "PROPHETX" = 2, "SNAIVE" = 1, "TBATS" = 1))+
+  
+  ggtitle("MAPE error across 16 training periods for tempInt for all models") +
+  labs(x = "Training sets", y = "%", colour = element_blank()) +
+  ggsave("MAPES.jpg",
+         width = 10,
+         dpi = "print",
+         height = 6,
+         path = "./exportsPleiades") 
+```
+

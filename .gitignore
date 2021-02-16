@@ -1,0 +1,11 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+articulos/**
+*.pdf
+LATEX/**
+fotos/**
+DATA/**
+GREENHOUSES/HIDROLEAF/**
+GREENHOUSES/PLEIADES/exportsPleiades/**

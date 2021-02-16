@@ -1,0 +1,799 @@
+---
+title: "Sistema de alertas"
+author: "Jose Vicente Yago Martinez"
+date: "20/8/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(forecast)
+library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tsfeatures)
+library(tidyverse)
+#library(ForecastComb)
+library(imputeTS)
+#library(GGally)
+library(gridExtra)
+library(PerformanceAnalytics)
+library(plotly)
+
+freq.daily <- 48
+route  = "./MODELS/"
+route_proc = "../../DATA/DATA_UMU/PROC/"
+ts.daily <- paste(route_proc, "ts.daily.rds", sep="") %>%  readRDS()
+ts.daily.broken <- paste(route_proc, "ts.daily.broken.rds", sep="") %>%  readRDS()
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+
+f <- paste(route_proc, "f.rds", sep="") %>%  readRDS()
+fx <- paste(route_proc, "fx.rds", sep="") %>%  readRDS()
+
+trainedModelsList <- paste(route, "trainedModelsList.rds", sep="") %>%  readRDS()
+forecastsLists    <- paste(route, "forecastsLists.rds", sep="") %>%  readRDS()
+```
+
+
+#GLOBAL
+
+C?lculo por instante, es decir que se lance un alarma si por un instante (1 obs = 30 min) se ha superado la temperatura l?mite.
+
+## ESCENARIO INFORMADO
+
+```{r}
+tresh.max = 40 #LIMITE
+error =  2.06 #EPSILON
+
+cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+      tPRED = f[,"NNETAR"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+
+dfConf$alarmReal <- dfConf$tREAL > tresh.max
+dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+
+TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+
+TPR =  TP / (TP+FN)
+FPR =  FP / (TN+FP)
+TNR =  TN / (TN+FP)
+FNR =  FN / (FN+TP)
+
+TOT = (TP + FP + TN + FN)
+
+ACC = (TP + TN) / TOT
+MISS_RATE = (FP + FN) / TOT
+FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+TN_RATE = 1 - FP_RATE
+PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+```
+
+```{r}
+cat(sprintf("TPR: %f ", TPR),"\n")
+cat(sprintf("FPR: %f ", FPR),"\n")
+cat(sprintf("TNR: %f ", TNR),"\n")
+cat(sprintf("FNR: %f ", FNR),"\n")
+
+cat(sprintf("ACC: %f ", ACC),"\n")
+cat(sprintf("PREC: %f ", PREC),"\n")
+cat(sprintf("MISS_RATE: %f ", MISS_RATE),"\n")
+```
+
+
+Rango de epsilon.
+```{r}
+error_vals_MEAN_notInf = seq(-40,40, 0.1)
+```
+
+
+Calculo de curvas ROC para cada epsilon para cada modelo
+```{r}
+i = 1
+listaROCGlobal.MEAN <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+        tPRED = f[,"MEAN"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.MEAN[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.MEAN, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.MEAN, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.MEAN
+
+#------------------------TBATS------------------------------------------------
+
+i = 1
+listaROCGlobal.TBATS <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+        tPRED = f[,"TBATS"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.TBATS[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.TBATS, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.TBATS, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.TBATS
+
+#---------------PROPHET---------------
+i = 1
+listaROCGlobal.PROPHET <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+        tPRED = f[,"PROPHET"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.PROPHET[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.PROPHET, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.PROPHET, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.PROPHET
+
+
+#--------------ARIMA----------------
+i = 1
+listaROCGlobal.ARIMA <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+        tPRED = f[,"ARIMA"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.ARIMA[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.ARIMA, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.ARIMA, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.ARIMA
+
+
+#--------------SNAIVE----------------
+i = 1
+listaROCGlobal.SNAIVE<- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+        tPRED = f[,"SNAIVE"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.SNAIVE[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.SNAIVE, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.SNAIVE, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.SNAIVE
+
+
+#--------------NNETAR----------------
+i = 1
+listaROCGlobal.NNETAR<- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = f[,"REAL"] %>% as.numeric(),
+        tPRED = f[,"NNETAR"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.NNETAR[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.NNETAR, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.NNETAR, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.NNETAR
+```
+
+```{r}
+ggplot() +
+  geom_line(aes(x = listaROCGlobal.TBATS$FPR, y = listaROCGlobal.TBATS$TPR, color = "TBATS"))+
+  geom_line(aes(x = listaROCGlobal.MEAN$FPR, y = listaROCGlobal.MEAN$TPR, color = "MEAN")) +
+  geom_line(aes(x = listaROCGlobal.PROPHET$FPR, y = listaROCGlobal.PROPHET$TPR, color = "PROPHET")) +
+  geom_line(aes(x = listaROCGlobal.ARIMA$FPR, y = listaROCGlobal.ARIMA$TPR, color = "ARIMA")) +
+  geom_line(aes(x = listaROCGlobal.SNAIVE$FPR, y = listaROCGlobal.SNAIVE$TPR, color = "SNAIVE")) +
+  geom_line(aes(x = listaROCGlobal.NNETAR$FPR, y = listaROCGlobal.NNETAR$TPR, color = "NNETAR"))  +
+  geom_point(aes(x =0.1243816254, y =0.980392157, color = "PROPHET"), size = 3)+  # error = 4.96
+  theme_bw()+
+  labs(x = "FPR", y = "TPR", color = element_blank()) +
+  ggtitle("Curvas ROC para modelos no informados") +
+  ggsave("curvasROCnoINF.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+```{r}
+cbind(listaROCGlobal.PROPHET, error_vals_MEAN_notInf) -> dd
+```
+
+
+
+#### ESCENARIO INFORMADO
+
+
+```{r}
+i = 1
+listaROCGlobal.MEANX <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = fx[,"REAL"] %>% as.numeric(),
+        tPRED = fx[,"MEAN"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.MEANX[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.MEANX, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.MEANX, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.MEANX
+
+#--------------------------------------ARIMX----------------------------------------------
+
+i = 1
+listaROCGlobal.ARIMAX <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = fx[,"REAL"] %>% as.numeric(),
+        tPRED = fx[,"ARIMA"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.ARIMAX[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.ARIMAX, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.ARIMAX, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.ARIMAX
+
+
+#----------------------------------------NNETARX--------------------------------------------
+
+i = 1
+listaROCGlobal.NNETARX <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = fx[,"REAL"] %>% as.numeric(),
+        tPRED = fx[,"NNETAR"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.NNETARX[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.NNETARX, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.NNETARX, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.NNETARX
+
+#-----------------------------------PROPHETX-------------------------------------------------
+
+i = 1
+listaROCGlobal.PROPHETX <- list()
+for(error in error_vals_MEAN_notInf){
+  
+  cbind(tREAL = fx[,"REAL"] %>% as.numeric(),
+        tPRED = fx[,"PROPHET"] %>% as.numeric()) %>% as.data.frame -> dfConf
+
+  dfConf$alarmReal <- dfConf$tREAL > tresh.max
+  dfConf$alarmPred <- dfConf$tPRED + error > tresh.max
+  
+  TP = (dfConf$alarmReal == T & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FP = (dfConf$alarmReal == F & dfConf$alarmPred == T) %>% sum
+  TN = (dfConf$alarmReal == F & dfConf$alarmPred == dfConf$alarmReal) %>% sum
+  FN = (dfConf$alarmReal == T & dfConf$alarmPred == F) %>% sum
+  
+  TPR =  TP / (TP+FN)
+  FPR =  FP / (TN+FP)
+  TNR =  TN / (TN+FP)
+  FNR =  FN / (FN+TP)
+  
+  TOT = (TP + FP + TN + FN)
+  
+  ACC = (TP + TN) / TOT
+  MISS_RATE = (FP + FN) / TOT
+  FP_RATE = FP / ((dfConf$alarmReal == F) %>% sum)
+  TN_RATE = 1 - FP_RATE
+  PREC = TP / ((dfConf$alarmReal == T) %>% sum)
+  
+  listaROCGlobal.PROPHETX[[toString(i)]] <- list(TPR = TPR, FPR =FPR)
+  i = i + 1 
+}
+
+cbind(TPR = sapply(listaROCGlobal.PROPHETX, '[[', "TPR"),
+      FPR = sapply(listaROCGlobal.PROPHETX, '[[', "FPR")) %>% as.data.frame() ->listaROCGlobal.PROPHETX
+
+```
+
+```{r}
+ggplot() +
+  geom_line(aes(x = listaROCGlobal.MEANX$FPR, y = listaROCGlobal.MEANX$TPR, color = "MEANX")) +
+  geom_line(aes(x = listaROCGlobal.SNAIVE$FPR, y = listaROCGlobal.SNAIVE$TPR, color = "SNAIVE")) +
+  geom_line(aes(x = listaROCGlobal.ARIMAX$FPR, y = listaROCGlobal.ARIMAX$TPR, color = "ARIMAX")) +
+  geom_line(aes(x = listaROCGlobal.NNETARX$FPR, y = listaROCGlobal.NNETARX$TPR, color = "NNETARX")) +
+  geom_line(aes(x = listaROCGlobal.PROPHETX$FPR, y = listaROCGlobal.PROPHETX$TPR, color = "PROPHETX")) +
+  geom_point(aes(x = 0.0391835844 , y = 0.977124183, color = "NNETARX"), size = 3) + # 2.06
+  theme_bw()+
+  ggtitle("Curvas ROC para los modelos informados")+
+  labs(x = "FPR", y = "TPR", color = element_blank()) + 
+  ggsave("curvasROCINF.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+```{r}
+cbind(listaROCGlobal.NNETARX, error_vals_MEAN_notInf) -> dd
+```
+
+
+
+### POR SEMANAS
+Se trata el caso de alarma semanal. Se lanza una alarma en un semana si la temperatura predicha ha superado el umbral durante m?s de t instantes. Es el caso TRATADO en la memoria.
+
+```{r}
+# añadido 28/07/2020
+tresh.max = 33 #LIMITE
+```
+
+
+```{r}
+for (i in 1:length(forecastsLists)){
+  mean <- forecastsLists[[i]]$PROPHET.fcast
+  forecastsLists[[i]]$PROPHET.fcast <- list()
+  forecastsLists[[i]]$PROPHET.fcast$mean <- mean
+    
+  mean <- forecastsLists[[i]]$MEAN.fcast
+  forecastsLists[[i]]$MEAN.fcast <- list()
+  forecastsLists[[i]]$MEAN.fcast$mean <- mean
+}
+```
+
+
+
+```{r}
+# --------------- EXPERIMENTAL2020
+
+t = 2 # hours in a row
+listaConfusionSemanalTotal <- list()
+
+for (model in (forecastsLists[[1]] %>% names)){
+  print(model)
+  listaConfusionSemanal <- list()
+  j = 1
+  for (error in seq(-40,+40,0.1)){
+    for(i in seq(1,length(sets),1)){ # realiza calculos para cada una de las semanas
+              TP = 0
+              TN = 0
+              FP = 0
+              FN = 0
+          
+              # Me quedo con los valores reales (REAL) y los predecidos(PRED)
+              cbind(REAL = sets[[i]]$TEST[,pred] %>% as.numeric(),
+                    PRED = forecastsLists[[i]][[model]]$mean)  %>% as.data.frame() -> dfAlerts
+              
+              # Calculo los valores de alarma booleanos, tanto REALES como PRED
+              dfAlerts$ALARM.REAL <- dfAlerts$REAL > tresh.max
+              dfAlerts$ALARM.PRED <- dfAlerts$PRED + error> tresh.max
+          
+              #Comprobar si hay TP en real [tuplas > t]
+              which(dfAlerts$ALARM.REAL == T) -> index
+              if (length(index) == 0) {
+                REAL = FALSE
+              } else {
+                  csum<-cumsum(c(1, abs(index[-length(index)] - index[-1]) > 1))
+                  by(index, csum, identity) -> listaIndicesAlertasMax
+                  Filter(function(x) length(x) >= t, listaIndicesAlertasMax)  %>%  length() > 0 -> REAL
+              }
+              
+              #Comprobar si hay P en pred [tuplas > t]
+              which(dfAlerts$ALARM.PRED == T) -> index
+              if (length(index) == 0) {
+                PRED = FALSE
+              } else {
+                  csum<-cumsum(c(1, abs(index[-length(index)] - index[-1]) > 1))
+                  by(index, csum, identity) -> listaIndicesAlertasMax
+                  Filter(function(x) length(x) >= t, listaIndicesAlertasMax)  %>%  length() > 0 -> PRED
+              }
+          
+              
+              if (REAL & PRED) {
+                TP = 1
+              }else if (!REAL & !PRED) {
+                TN= 1
+              }else if (REAL & !PRED) {
+                FN = 1
+              }else if (!REAL & PRED) {
+                FP = 1
+              }
+              
+              listaConfusionSemanal[[toString(i)]] <- list(TP = TP,
+                                                         TN = TN,
+                                                         FN = FN,
+                                                         FP = FP)
+          }
+          
+          cbind(TP = sapply(listaConfusionSemanal, '[[', "TP"),
+                TN = sapply(listaConfusionSemanal, '[[', "TN"),
+                FP = sapply(listaConfusionSemanal, '[[', "FP"),
+                FN = sapply(listaConfusionSemanal, '[[', "FN")) %>% as.data.frame() -> resultsWeekly
+          
+          
+          
+          TPR = (resultsWeekly$TP %>% sum()) / (resultsWeekly$TP %>% sum()
+                                                +
+                                                resultsWeekly$FN %>% sum())
+          
+          TNR = (resultsWeekly$TN %>% sum()) / (resultsWeekly$FP %>% sum()
+                                                +
+                                                resultsWeekly$TN%>% sum())
+  
+          FPR = 1 - TNR      
+          listaConfusionSemanalTotal[[model]][[toString(j)]] <- list(TPR = TPR, FPR = FPR)
+          j = j + 1 
+          
+  }
+}
+```
+
+
+```{r}
+for (model in listaConfusionSemanalTotal %>% names()) {
+  cbind(TPR = sapply(listaConfusionSemanalTotal[[model]], '[[', "TPR"),
+        FPR = sapply(listaConfusionSemanalTotal[[model]], '[[', "FPR")) %>% as.data.frame() -> listaConfusionSemanalTotal[[model]]
+}
+```
+
+
+
+
+```{r}
+
+ggplot() +
+  geom_line(aes(x = listaConfusionSemanalTotal$SNAIVE$FPR, y = listaConfusionSemanalTotal$SNAIVE$TPR, color = "SNAIVE"))+
+  geom_line(aes(x = listaConfusionSemanalTotal$ARIMA$FPR, y = listaConfusionSemanalTotal$ARIMA$TPR, color = "ARIMA"))+
+  geom_line(aes(x = listaConfusionSemanalTotal$NNETAR$FPR, y = listaConfusionSemanalTotal$NNETAR$TPR, color = "NNETAR"))+
+  geom_line(aes(x = listaConfusionSemanalTotal$PROPHET$FPR, y = listaConfusionSemanalTotal$PROPHET$TPR, color = "PROPHET"))+
+  geom_line(aes(x = listaConfusionSemanalTotal$TBATS.fcast$FPR, y = listaConfusionSemanalTotal$TBATS.fcast$TPR, color = "TBATS"))+
+  geom_line(aes(x = listaConfusionSemanalTotal$MEAN.fcast$FPR, y = listaConfusionSemanalTotal$MEAN.fcast$TPR, color = "COMB"))+
+
+  
+  geom_point(aes(x = listaConfusionSemanalTotal$SNAIVE$FPR, y = listaConfusionSemanalTotal$SNAIVE$TPR, color = "SNAIVE"))+
+  geom_point(aes(x = listaConfusionSemanalTotal$ARIMA$FPR, y = listaConfusionSemanalTotal$ARIMA$TPR, color = "ARIMA"))+
+  geom_point(aes(x = listaConfusionSemanalTotal$NNETAR$FPR, y = listaConfusionSemanalTotal$NNETAR$TPR, color = "NNETAR"))+
+  geom_point(aes(x = listaConfusionSemanalTotal$PROPHET$FPR, y = listaConfusionSemanalTotal$PROPHET$TPR, color = "PROPHET"))+
+  geom_point(aes(x = listaConfusionSemanalTotal$TBATS.fcast$FPR, y = listaConfusionSemanalTotal$TBATS.fcast$TPR, color = "TBATS"))+
+  geom_point(aes(x = listaConfusionSemanalTotal$MEAN.fcast$FPR, y = listaConfusionSemanalTotal$MEAN.fcast$TPR, color = "COMB"))+  
+  
+  theme_bw()+
+  ggtitle("Curvas ROC para los modelos no informados. [Alarma semanal]")+
+  labs(x = "FPR", y = "TPR", color = element_blank()) +
+  ggsave("curvasROCINFSemanal.jpeg",
+         width = 5,
+         dpi = "print",
+         height = 3,
+         path = "./exportsPleiades")
+
+```
+
+
+```{r}
+cbind(listaConfusionSemanalTotal$ARIMA.fcast,seq(-40,+40,0.1))
+```
+
+
+```{r}
+## EXPERIMENTAL 2020 
+error = 4.5 # ARIMA
+metrics <- list()
+for (model in (forecastsLists[[1]] %>% names)){
+  for(i in seq(1,length(sets),1)){ # realiza calculos para cada una de las semanas
+              TP = 0
+              TN = 0
+              FP = 0
+              FN = 0
+          
+              # Me quedo con los valores reales (REAL) y los predecidos(PRED)
+              cbind(REAL = sets[[i]]$TEST[,pred] %>% as.numeric(),
+                    PRED = forecastsLists[[i]][[model]]$mean %>%  as.numeric())  %>% as.data.frame() -> dfAlerts
+              
+              # Calculo los valores de alarma booleanos, tanto REALES como PRED
+              dfAlerts$ALARM.REAL <- dfAlerts$REAL > tresh.max
+              dfAlerts$ALARM.PRED <- dfAlerts$PRED + error> tresh.max
+          
+              #Comprobar si hay TP en real [tuplas > t]
+              which(dfAlerts$ALARM.REAL == T) -> index
+              if (length(index) == 0) {
+                REAL = FALSE
+              } else {
+                  csum<-cumsum(c(1, abs(index[-length(index)] - index[-1]) > 1))
+                  by(index, csum, identity) -> listaIndicesAlertasMax
+                  Filter(function(x) length(x) >= t, listaIndicesAlertasMax)  %>%  length() > 0 -> REAL
+              }
+              
+              #Comprobar si hay P en pred [tuplas > t]
+              which(dfAlerts$ALARM.PRED == T) -> index
+              if (length(index) == 0) {
+                PRED = FALSE
+              } else {
+                  csum<-cumsum(c(1, abs(index[-length(index)] - index[-1]) > 1))
+                  by(index, csum, identity) -> listaIndicesAlertasMax
+                  Filter(function(x) length(x) >= t, listaIndicesAlertasMax)  %>%  length() > 0 -> PRED
+              }
+          
+              
+              if (REAL & PRED) {
+                TP = 1
+              }else if (!REAL & !PRED) {
+                TN= 1
+              }else if (REAL & !PRED) {
+                FN = 1
+              }else if (!REAL & PRED) {
+                FP = 1
+              }
+              
+              listaConfusionSemanal[[toString(i)]] <- list(TP = TP,
+                                                         TN = TN,
+                                                         FN = FN,
+                                                         FP = FP)
+          }
+          
+          cbind(TP = sapply(listaConfusionSemanal, '[[', "TP"),
+                TN = sapply(listaConfusionSemanal, '[[', "TN"),
+                FP = sapply(listaConfusionSemanal, '[[', "FP"),
+                FN = sapply(listaConfusionSemanal, '[[', "FN")) %>% as.data.frame() -> resultsWeekly
+          
+          
+          
+          TPR = (resultsWeekly$TP %>% sum()) / (resultsWeekly$TP %>% sum()
+                                                +
+                                                resultsWeekly$FN %>% sum())
+          
+          TNR = (resultsWeekly$TN %>% sum()) / (resultsWeekly$FP %>% sum()
+                                                +
+                                                resultsWeekly$TN%>% sum())
+  
+          FPR = 1 - TNR   
+          
+          ACC = (resultsWeekly$TP %>% sum() + resultsWeekly$TN %>% sum()) / 
+                (resultsWeekly$TP %>% sum() +
+                 resultsWeekly$TN %>% sum() +
+                 resultsWeekly$FP %>% sum() + 
+                 resultsWeekly$FN %>% sum())
+          
+          metrics[[model]] <- list(TPR = TPR, TNR = TNR, FPR = FPR, ACC = ACC)
+}
+```
+
+```{r}
+metrics %>% names()
+metrics$ARIMA.fcast
+```
+
+
+
+
+
+
+```{r}
+library(forecast)
+start = f %>%  start
+end = f %>% end
+
+f %>% window(start = start,
+             end = end) -> g
+
+autoplot(g[,"ARIMA"] + 4.5, series = "ARIMA")+
+  autolayer(g[,"REAL"], series = "REAL",  color = "black", alpha = 0.5) +
+  geom_hline(aes(yintercept = 33))+
+
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggtitle("ARIMA + 4.5 ºC")
+  ggsave("NNETARSALERTA.jpeg",
+         width = 14,
+         dpi = "retina",
+         height = 6,
+         path = "./exportsPleiades")
+```
+

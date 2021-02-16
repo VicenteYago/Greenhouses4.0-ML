@@ -1,0 +1,564 @@
+---
+title: "pleiadesGH_preproc"
+author: "Jose Vicente Yago Martinez"
+date: "21/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+En este fichero se lleva a cabo un complejo proceso de transformación de datos en crudo, directamente extraidos de la base de datos,
+tal y como fueron medidos por los sensores, hay una serie de problemas que deben ser tenidos en cuenta:
+
+* PROBLEMAS:
+  + Periodos de longitud variable en los que un sensor o sensores dejaron de funcionar, y en los que un subconjunto de sensores
+    siguió funcionando. En los citados períodos no se registro de forma explícita la perdida de información con valores "NA" o 
+    similiares, sino que esos datos juntos con su referencia temporal simplemente no existen en el registro del sensor.
+  + Distintos modelos de sensor funcionan a distinta frecuencia, la frecuencia en el contexto de este trabajo se entiende como 
+    el intervalo de tiempo en el que se registran 2 observaciones adyacentes. La frecuencia para un tipo de sensor es fija, 
+    pero se da el caso de que una familia de sensores tiene una frecuencia de por ejemplo 20 minutos y otra familia de sensores
+    tiene por ejemplo una frecuencia de 10 minutos. La consecuencia inmediata de este problema es que con estos datos no podemos 
+    agruparlos en un mismo dataframe. Este problema es el más grave.
+  + No todos los sensores empezaron a medir a la vez, este problema puede verse como un caso especial del problema anterior.
+
+
+Una vez ejecutado este fichero todos estos problemas estarán resueltos y se habrán creado tres versiones perfectamente funcionales.
+
+# CARGAR DATOS + LIBRERIAS
+En este apartado se realiza la carga de los datos en crudo y la carga de las librerias necesarias, tambien se llaman a las 
+"librerías" que he creado con funciones auxiliares, estas librerías no son más que ficheros que contienen funciones.
+
+```{r}
+
+library(purrr)      
+library(xts)        #Series de tiempo xts
+library(climateeng) #Calcular humedad específica
+library(forecast)   #Forecast  + ts()
+library(ggplot2)    #Graficos avanzados
+library(scales)     #Crear escalas avanzadas para ggplot
+library(PerformanceAnalytics) #Correlograma
+library(MASS)       # Clustering k-means
+library(imputeTS)
+
+source("../../GREENHOUSES/funciones/cbindAll.R")
+source("../../GREENHOUSES/funciones/ghFixFormats.R")
+source("../../GREENHOUSES/funciones/rh2qair.R")
+source("../../GREENHOUSES/funciones/createFixdf.R")
+source("../../GREENHOUSES/funciones/maxDailyTime.R")
+source("../../GREENHOUSES/funciones/meanSafe.R")
+source("../../GREENHOUSES/funciones/summarytS.R")
+source("../../GREENHOUSES/funciones/clusteringKmeans.R")
+source("../../GREENHOUSES/funciones/uncertainEllipses.R")
+source("../../GREENHOUSES/funciones/4theta.R")
+source("../../GREENHOUSES/funciones/interpolations.R")
+```
+
+
+```{r}
+hum1_int   <- read.csv(file="../../DATA/DATA_UMU/RAW/hum1_int.csv",
+                    header=F, stringsAsFactors=FALSE, sep=",")
+
+hum2_int   <- read.csv(file="../../DATA/DATA_UMU/RAW/hum2_int.csv",
+                    header=F, stringsAsFactors=FALSE, sep=",")
+
+hum_ext    <- read.csv(file="../../DATA/DATA_UMU/RAW/hum_ext.csv",
+                   header=F,stringsAsFactors=FALSE, sep=",")
+
+radsol_ext <- read.csv(file="../../DATA/DATA_UMU/RAW/radsol_ext.csv",
+                      header=F, stringsAsFactors=FALSE, sep=",")
+
+temp_ext   <- read.csv(file="../../DATA/DATA_UMU/RAW/temp_ext.csv",
+                    header=F, stringsAsFactors=FALSE, sep=",")
+
+temp1_int  <- read.csv(file="../../DATA/DATA_UMU/RAW/temp1_int.csv",
+                     header=F, stringsAsFactors=FALSE, sep=",")
+
+temp2_int  <- read.csv(file="../../DATA/DATA_UMU/RAW/temp2_int.csv",
+                     header=F, stringsAsFactors=FALSE, sep=",")
+
+tempmac1   <- read.csv(file="../../DATA/DATA_UMU/RAW/tempmac1_int.csv",
+                    header=F, stringsAsFactors=FALSE, sep=",")
+
+tempmac2   <- read.csv(file="../../DATA/DATA_UMU/RAW/tempmac2_int.csv",
+                    header=F, stringsAsFactors=FALSE, sep=",")
+
+ctrltemp   <- read.csv(file="../../DATA/DATA_UMU/RAW/ctrltemp.csv",
+                    header=F, stringsAsFactors=FALSE, sep=",")
+
+valvriego  <- read.csv(file="../../DATA/DATA_UMU/RAW/valvriego.csv",
+                     header=F, stringsAsFactors=FALSE, sep=",")
+
+veloviento <- read.csv(file="../../DATA/DATA_UMU/RAW/veloviento.csv",
+                      header=F, stringsAsFactors=FALSE, sep=",")
+
+
+#Preparo una lista con las variables en crudo cargadas para liberarlas en el futuro, 
+#Con el objetivo de ahorrar espacio en memoria.
+listRemove = c('hum1_int', 'hum2_int', 'hum_ext', 'radsol_ext', 'temp_ext', 'temp1_int',
+               'temp2_int', 'tempmac1', 'tempmac2', 'ctrltemp', 'valvriego', 'veloviento')
+```
+
+
+# MEGADF
+En este apartado se va a constuir un dataframe especial llamado el "MEGADF" o megadataframe. Este df reune todos los sensores
+de una forma muy primitiva, cada sensor tienen su referencia temporal y sus valores respectivamente. Es decir si tenemos 
+11 sensores, tenemos 11 referencias temporales y 11 series de valores, en total 22 columnas. El objetivo del 'megadf' es 
+permitir un acceso rápido y simple a los sensores en crudo. Como se verá más adelante el megadf tiene un papel crucial a la 
+hora de verificar que las transformaciones realizadas en este fichero han funcionado correctamente.
+```{r}
+
+#Este tipo de sensor almacena la referencia temporal en la variable nº3 y el valor registrado en la variable nº 14
+
+timeHum1_int<-hum1_int$V3
+Hum1_int<-hum1_int$V14
+
+timeHum2_int<-hum2_int$V3
+Hum2_int<-hum2_int$V14
+
+timeHum_ext<-hum_ext$V3
+Hum_ext<-hum_ext$V14
+
+timeRadsol_ext<-radsol_ext$V3
+Radsol_ext<-radsol_ext$V14
+
+timeTemp_ext<-temp_ext$V3
+Temp_ext<-temp_ext$V14
+
+timeTemp1_int<-temp1_int$V3
+Temp1_int<-temp1_int$V14
+
+timeTemp2_int<-temp2_int$V3
+Temp2_int<-temp2_int$V14
+
+timeTempmac1<-tempmac1$V3
+Tempmac1<-tempmac1$V14
+
+timeTempmac2<-tempmac2$V3
+Tempmac2<-tempmac2$V14
+
+timeValvriego<-valvriego$V3
+Valvriego<-valvriego$V5
+
+timeVeloviento<-veloviento$V3
+Veloviento<-veloviento$V14
+
+lCols = list(timeHum1_int, Hum1_int,
+             timeHum2_int, Hum2_int,
+             timeTemp1_int, Temp1_int,
+             timeTemp2_int, Temp2_int,
+             timeTempmac1, Tempmac1,
+             timeTempmac2, Tempmac2,
+
+             timeHum_ext, Hum_ext,
+             timeRadsol_ext, Radsol_ext,
+             timeTemp_ext, Temp_ext,
+             timeValvriego, Valvriego,
+             timeVeloviento, Veloviento)
+
+
+megadf<- data.frame()
+for (col in lCols) {
+  megadf<-cbind.all(megadf,unlist(col))
+}
+
+nombres<-c("timeHum1_int", "Hum1_int",
+             "timeHum2_int", "Hum2_int",
+             "timeTemp1_int", "Temp1_int",
+             "timeTemp2_int", "Temp2_int",
+             "timeTempmac1", "Tempmac1",
+             "timeTempmac2", "Tempmac2",
+             "timeHum_ext", "Hum_ext",
+             "timeRadsol_ext", "Radsol_ext",
+             "timeTemp_ext", "Temp_ext",
+             "timeValvriego", "Valvriego",
+             "timeVeloviento", "Veloviento")
+
+colnames(megadf)<-nombres
+megadf<-as.data.frame(megadf, stringsAsFactors = FALSE)
+
+megadf$timeHum1_int<-as.POSIXct(megadf$timeHum1_int, format = "%Y-%m-%d %H:%M") 
+megadf$Hum1_int<-as.numeric(megadf$Hum1_int)
+
+megadf$timeHum2_int<-as.POSIXct(megadf$timeHum2_int, format = "%Y-%m-%d %H:%M")
+megadf$Hum2_int<-as.numeric(megadf$Hum2_int)
+
+megadf$timeHum_ext<-as.POSIXct(megadf$timeHum_ext, format = "%Y-%m-%d %H:%M")
+megadf$Hum_ext<-as.numeric(megadf$Hum_ext)
+
+megadf$timeRadsol_ext<-as.POSIXct(megadf$timeRadsol_ext, format = "%Y-%m-%d %H:%M")
+megadf$Radsol_ext<-as.numeric(megadf$Radsol_ext)
+
+megadf$timeTemp_ext<-as.POSIXct(megadf$timeTemp_ext, format = "%Y-%m-%d %H:%M")
+megadf$Temp_ext<-as.numeric(megadf$Temp_ext)
+
+megadf$timeTemp1_int<-as.POSIXct(megadf$timeTemp1_int, format = "%Y-%m-%d %H:%M")
+megadf$Temp1_int<-as.numeric(megadf$Temp1_int)
+
+megadf$timeTemp2_int<-as.POSIXct(megadf$timeTemp2_int, format = "%Y-%m-%d %H:%M")
+megadf$Temp2_int<-as.numeric(megadf$Temp2_int)
+
+megadf$timeTempmac1<-as.POSIXct(megadf$timeTempmac1, format = "%Y-%m-%d %H:%M")
+megadf$Tempmac1<-as.numeric(megadf$Tempmac1)
+
+megadf$timeTempmac2<-as.POSIXct(megadf$timeTempmac2, format = "%Y-%m-%d %H:%M")
+megadf$Tempmac2<-as.numeric(megadf$Tempmac2)
+
+megadf$timeValvriego<-as.POSIXct(megadf$timeValvriego, format = "%Y-%m-%d %H:%M")
+megadf$Valvriego<-as.numeric(megadf$Valvriego)
+
+megadf$timeVeloviento<-as.POSIXct(megadf$timeVeloviento, format = "%Y-%m-%d %H:%M")
+
+megadf$Veloviento<-as.numeric(megadf$Veloviento)
+
+```
+
+
+## RESUMEN
+Visualizamos las frecuencias de cada sensor para que se manifiesten los problemas que se van a resolver
+```{r}
+mask.V <- c(F, T, F, T, F, T, F, T, F, T,
+            F, T, F, T, F, T, F, T, F, T)
+summary.tS(megadf, mask.V)
+```
+
+* A continuación se explican los columnas de esta tabla:
+  + Frecuency: Frecuencia de cada sensor, se calcula restando el tiempo de 2da observación a la 1ra, repitiendo esta operación para 
+               cada sensor, pues las frecuencias son fijas.
+  + Valid: Representa el nº de observaciones no nulas de cada fila. La motivación de la inclusión de esta fila esta fuertemente
+           relacionada con la forma en la que se construyó la tabla: Los sensores de frecuencia más rapida necesitan mucho más filas
+           que los sensores de frecuencia lenta, para poder meter a todos los sensores en el mismo megadf, se ajusta como nº de filas 
+           de la tabla el nº de observaciones del sensor, obviamente, con más obsevaciones. Los filas redundantes de los 
+           sensores más lentos se rellenan con NAs. El sensor con más observaciones es el que mide la velocidad del viento
+           (veloViento), que ha estado operando todo el tiempo y por lo tanto solo tiene observaciones válidas y ninguna nula.
+  + NAs : Se calcula de forma complementaria a la columna anterior.
+  + Total : Se calcula como Valid + NAs y debe dar el mismo valor para todos los sensores.
+  + First: La primera observación registrada para cada sensor, nótese que existen algunos sensores que empezaron mucho antes a 
+           registrar datos.
+  + Last : La última observacion no nula para cada sensor, de igual forma que la columna anterior no todos los sensores registraron
+           su ultima observacion no nula en el mismo instante de tiempo.
+
+Ahora que conocemos mejor la naturaleza técnica de los datos y sus problemas pasamos al siguiente apartado donde se revelarán 
+todos estos problemas.
+
+# PLEIADES[V0/V1/V2]
+
+* Este apartado se llama Pleiades debido a que es el nombre que va recibir el dataframe resultante. Asimismo tendra 3 versiones
+  + PLEIADES V0
+  + PLEIADES V1
+  + PLEIADES V2
+
+Más adelante explicaré en detalle el contenido de cada una de estas versiones.
+
+A grandes rasgos vamos a unificar las frecuencias de los sensores y a interpolar los nulos para conseguir un dataframe 
+que solamente tenga una referencia temporal común y que las demás columnas sean únicamente de datos. 
+
+
+*Hay unos parámetros muy importantes para llevar a cabo este proceso.
+  + breakt: Constituye la nueva frecuencia general a la que se van a adherir los sensores, en minutos. Tras varias pruebas se 
+            determinó que 30 era un buen valor. Es importante notar que la agregación fallaría si se asignase un valor inferior a la
+            frecuencia más rápida (en este caso 10 minutos), como por ejemplo breakt = 5, pues la agregación intentaría agrupar
+            valores en intervalos de 5 minutos obteniendo en muchos casos solo NAs. De forma contraria cuanto más grande sea este
+            valor, menos precisión tendríamos pues se reliza una media con todos los valores que caen en el intervalo breakT.
+  + interval: Se define el intervalo de muestreo deseado, este parámetro tiene sentido si tratamos con una gran cantidad de datos
+            como por ejemplo varios años, y solo queremos tratar los referentes a un periodo determinado.
+  
+```{r}
+breakt   <- 30 
+interval <- c('2018-1-1','2019-1-1') 
+```
+
+
+A continuacion una vez establecidos estos parámetros se llega al núcleo del proceso, para todos los sensores se va a relizar una
+transformación muy importane para cada sensor, todo el peso del proceso recae sobre la función **create.fix.df**, recomiendo mucho
+mirar el código y las explicaciones que hay en el fichero createFixdf.R si se desean conocer detalles técnicos de implementación, si no, basta con saber que esta función devuelve un dataframe que contiene el sensor agregado a la frecuencia deseada.
+
+Otra función importante de cara a la construcción de las versiones es **mean.safe**, la utilizo simplementa para realizar una media de
+los sensores 'hermanos', los sensores hermanos son aquellos sensores que estan repetidos como por ejemplo temp1Int y temp2Int.
+
+```{r}
+#--------------------SENSORES INTERIORES---------------------#
+#--------------Temperaturas interiores del aire--------------#
+temp1Int<-create.fix.df(temp1_int$V3, temp1_int$V14, breakt,
+                        interval = interval)
+
+temp2Int<-create.fix.df(temp2_int$V3, temp2_int$V14, breakt,
+                        interval = interval)
+
+tempInt<-mean.safe(temp1Int$V2, temp2Int$V2)
+
+#--------------Temperaturas interiores de las macetas--------#
+temp1Mac<-create.fix.df(tempmac1$V3, tempmac1$V14, breakt,
+                        interval = interval)
+
+temp2Mac<-create.fix.df(tempmac2$V3, tempmac2$V14, breakt,
+                        interval = interval)
+
+tempMac<-mean.safe(temp1Mac$V2, temp2Mac$V2)
+
+#---------Humedades interiores relativas y específicas--------#
+#----------HumInt1.R/HumInt1.E
+hum1Int.R<-create.fix.df(hum1_int$V3, hum1_int$V14,breakt,
+                         interval = interval)
+
+hum1Int.E<-hum_ratio(rel.hum = hum1Int.R$V2,
+                     temp.air = temp1Int$V2,
+                     alt = 34) #Altitud en murcia según Wikipedia
+
+#----------HumInt2.R/HumInt2.E
+hum2Int.R<-create.fix.df(hum2_int$V3, hum2_int$V14, breakt,
+                         interval = interval)
+
+hum2Int.E<-hum_ratio(rel.hum = hum2Int.R$V2,
+                     temp.air = temp2Int$V2,
+                     alt = 34) #Altitude en murcia según Wikipedia
+
+#----------HumInt.R/HumInt.E
+humInt.R<-mean.safe(hum1Int.R$V2, hum2Int.R$V2)
+humInt.E<-hum_ratio(rel.hum = humInt.R,
+                    temp.air = tempInt,
+                    alt = 34) #Altitude en murcia según Wikipedia
+
+#--------------------SENSORES EXTERIORES---------------------#
+#--------------------Temperatura exerior---------------------#
+tempExt<-create.fix.df(temp_ext$V3, temp_ext$V14, breakt,
+                       interval = interval)
+
+#--------------------Velocidad del viento--------------------#
+vientoVelo<-create.fix.df(veloviento$V3, veloviento$V14, breakt,
+                          interval = interval)
+
+#----------Humedade exterior relativa y específica----------#
+#----------HumExt.R/HumExt.E
+humExt.R<-create.fix.df(hum_ext$V3, hum_ext$V14, breakt,
+                        interval = interval)
+
+humExt.E<-hum_ratio(rel.hum = humExt.R$V2,
+                    temp.air = tempExt$V2,
+                    alt = 34) #Altitud en murcia según Wikipedia
+
+#----------Radiacion exterior
+radExt<-create.fix.df(radsol_ext$V3, radsol_ext$V14, breakt,
+                      interval = interval)
+
+#-----------------------#
+#---------RIEGO---------#
+#-----------------------#
+#Los valores en crudo del riego solo contiene cuando se enciende y se apaga el riego,
+#cada mañana a las 07:00 aprox, cada 2 dias aprox. Hay que expandir esos timestamps
+#de forma controlada para que cuadre con los timestamps del conjunto del Invernadero,
+#manteniendo además los momentos exactos originales de encendido/apagado. Esto es muy dificil.
+
+#Por eso copio los valores ya "corregidos" o fixed, de la variable de referencia del dataframe final,
+#la variable VELOVIENTO y fijandome en los momentos exactos de encendido/apagado del riego, marco con precision estos instantes de tiempo.
+
+timeValvriego<-valvriego$V3
+Valvriego<-valvriego$V5
+dfRiego<-cbind2(timeValvriego, Valvriego)
+dfRiego<-as.data.frame(dfRiego)
+dfRiego$V1<-as.POSIXct(dfRiego$V1, format = "%Y-%m-%d %H:%M")
+dfRiego$V2<-as.numeric(levels(dfRiego$V2))[dfRiego$V2]
+
+selected<-dfRiego$V2 == 1
+dfRiego<-dfRiego[selected, ]
+
+riegofixed<-hum1Int.R 
+riegofixed[,2]<-NA
+
+for (row in 1:nrow(dfRiego)) {
+  date <- dfRiego[row, "V1"]
+  value <- dfRiego[row, "V2"]
+  diff <- difftime(date, riegofixed$V1, units = "mins") 
+  diff <- abs(diff)
+  arrayRes <- (diff <= 15) #!!!!!
+  if (any(arrayRes>0)) {
+     riegofixed$V2[arrayRes] <- value
+  }
+}
+riegofixed[is.na(riegofixed)] <-0 
+```
+
+
+Llegados a este punto tenemos todo lo necesario para generar nuestro ansiado dataframe que unifique los sensores anteriormente 
+transformados. Como he dicho antes voy a generar 3 versiones. 
+
+## PLEIADES V0
+
+* En esta versión se van a mantener todos los sensores, incluso aquellos que están repetidos, los llamados sensores hermanos:
+  + humInt1
+  + humInt2
+
+  + tempInt1
+  + tempInt2
+
+  + tempMac1
+  + tempMac2
+
+```{r}
+#========================ENSAMBLAJE FINAL PLEIADES GREENHOUSE v0========================#
+#Extraigo la referencia temporal de una variable resampleada cualquiera
+pleiadesGH.v0<-data.frame(hum1Int.R$V1)
+#pleiadesGH.v0<-data.frame(humExt.R$V1)
+
+#Lista de variables (valores medidos) que voy a introducir en el megadataframe
+list = list(hum1Int.R$V2, hum1Int.E,
+            hum2Int.R$V2, hum2Int.E,
+            temp1Int$V2, temp2Int$V2, temp1Mac$V2, temp2Mac$V2,
+            humExt.R$V2, humExt.E, radExt$V2,
+            tempExt$V2, vientoVelo$V2, riegofixed$V2)
+
+#Binding por columnas
+for (i in list) {
+  pleiadesGH.v0<-cbind.all(pleiadesGH.v0, unlist(i))
+}
+
+#Conversión a dataframe y renombramiento
+pleiadesGH.v0<-as.data.frame(pleiadesGH.v0, stringsAsFactors = FALSE)
+colnames(pleiadesGH.v0) <- c("time",
+                             "hum1Int.R","hum1Int.E",
+                             "hum2Int.R","hum2Int.E",
+                             "temp1Int", "temp2Int",
+                             "temp1Mac","temp2Mac",
+                             "humExt.R", "humExt.E",
+                             "radExt", "tempExt",
+                             "vientoVelo", "riego")
+
+#Formatear
+pleiadesGH.v0<-gh.fix.formats(pleiadesGH.v0)
+
+#Crear una version alternativa con NAs interpolados
+pleiadesGH.v0.interp <- na.interp2.df(pleiadesGH.v0)
+```
+
+Es la versión más pesada y contiene información "repetida" de los sensores hermanos.
+
+## PLEIADES V1
+
+Con el objetivo de tener una versión mas reducida, he creado este dataframe, el aligeramiento se produce al hacer una media 
+de los sensores hermanos.
+
+* Sensores reducidos:
+  + humInt1
+  + humInt2
+
+  + tempInt1
+  + tempInt2
+
+  + tempMac1
+  + tempMac2
+
+* Sensores resultantes
+  + humedadInterior
+  + temperaturaInterior
+  + temperaturaMaceta
+
+```{r}
+#========================ENSAMBLAJE FINAL PLEIADES GREENHOUSE v1========================#
+
+
+
+#Construyo la humedad especifica en función de las humedades disponibles
+
+
+#Añado columnas que puedo reutilizar de la versión 0
+selectedCols <- c("time","humExt.R","humExt.E", "radExt", "tempExt", "vientoVelo", "riego")
+pleiadesGH.v1<-pleiadesGH.v0[selectedCols]
+
+#Añado manualmente la media de los sensores hermanos
+list = list(humInt.R, humInt.E, tempInt, tempMac)
+for (i in list) {
+  pleiadesGH.v1<-cbind.all(pleiadesGH.v1, unlist(i))
+}
+
+#Conversión a dataframe y renombramiento
+pleiadesGH.v1<-as.data.frame(pleiadesGH.v1, stringsAsFactors = FALSE)
+colnames(pleiadesGH.v1) <- c("time","humExt.R", "humExt.E", "radExt", "tempExt", "vientoVelo", "riego",
+                            "humInt.R", "humInt.E", "tempInt", "tempMac")
+
+#Formatear
+pleiadesGH.v1<-gh.fix.formats(pleiadesGH.v1)
+
+#Crear una version alternativa con NAs interpolados
+pleiadesGH.v1.interp <- na.interp2.df(pleiadesGH.v1)
+```
+
+## PLEIADES V2
+
+* En esta versión  he decido quedarme solo con uno de los hermanos de cada par, el que tenga el comportamiento más extremo, 
+por lo cual me quedo con:
+
+  + humedadInterior1
+  + temperaturaInterior1
+  + temperaturaMaceta2
+
+El lector puede sentirse confuso sobre la naturaleza de esta decisión y esta en lo cierto, para comprenderla mejor hay poder ver los
+gráficos del fichero *pleiadesGH_preproc_vis* sección *Diferencias entre versiones*.
+
+
+```{r}
+#========================ENSAMBLAJE FINAL PLEIADES GREENHOUSE v2========================#
+
+#  -humedadInterior1
+#  -temperaturaInterior1
+#  -temperaturaMaceta2
+
+selectedCols <- c("time", "hum1Int.R","hum1Int.E", "temp1Int", "temp2Mac",
+                  "humExt.R", "humExt.E", "radExt", "tempExt", "vientoVelo", "riego")
+
+pleiadesGH.v2<-pleiadesGH.v0[selectedCols]
+
+colnames(pleiadesGH.v2) <- c("time", "humInt.R",  "humInt.E", "tempInt","tempMac",
+                             "humExt.R", "humExt.E", "radExt", "tempExt", "vientoVelo", "riego")
+
+#Crear una version alternativa con NAs interpolados
+pleiadesGH.v2.interp <- na.interp2.df(pleiadesGH.v2)
+```
+
+* Se han creado las siguientes versiones:
+
+  + pleiades.v0
+  + pleiades.v0.interp
+  + pleiades.v1
+  + pleiades.v1.interp
+  + pleiades.v2
+  + pleiades.v2.interp
+
+```{r}
+remove(list = listRemove)
+remove(listRemove)
+
+
+if (F){
+route_proc = "../../DATA/DATA_UMU/PROC/"
+
+#V0
+saveRDS(pleiadesGH.v0, paste(route_proc, "pleiadesGH.v0.rds", sep=""))
+write.csv(pleiadesGH.v0, file = paste(route_proc, "pleiadesGH.v0.csv", sep=""),row.names=TRUE)
+
+saveRDS(pleiadesGH.v0.interp, paste(route_proc, "pleiadesGH.v0.interp.rds", sep=""))
+write.csv(pleiadesGH.v0.interp, file = paste(route_proc, "pleiadesGH.v0.interp.csv", sep=""),row.names=TRUE)
+
+
+#V1
+saveRDS(pleiadesGH.v1, paste(route_proc, "pleiadesGH.v1.rds", sep=""))
+write.csv(pleiadesGH.v1, file = paste(route_proc, "pleiadesGH.v1.csv", sep=""),row.names=TRUE)
+
+saveRDS(pleiadesGH.v1.interp, paste(route_proc, "pleiadesGH.v1.interp.rds", sep=""))
+write.csv(pleiadesGH.v1.interp, file = paste(route_proc, "pleiadesGH.v1.interp.csv", sep=""),row.names=TRUE)
+
+
+#V2
+saveRDS(pleiadesGH.v2, paste(route_proc, "pleiadesGH.v2.rds", sep=""))
+write.csv(pleiadesGH.v2, file = paste(route_proc, "pleiadesGH.v2.csv", sep=""),row.names=TRUE)
+
+saveRDS(pleiadesGH.v2.interp, paste(route_proc, "pleiadesGH.v2.interp.rds", sep=""))
+write.csv(pleiadesGH.v2.interp, file = paste(route_proc, "pleiadesGH.v2.interp.csv", sep=""),row.names=TRUE)
+}
+
+```
+
+
+
+
+

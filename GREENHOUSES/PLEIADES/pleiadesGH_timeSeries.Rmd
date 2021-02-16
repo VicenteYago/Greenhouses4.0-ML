@@ -1,0 +1,346 @@
+---
+title: "pleiadesGH_forecast"
+author: "Jose Vicente Yago Martinez"
+date: "18/4/2019"
+output:
+  html_document: default
+  word_document: default
+---
+
+Bibliografia:
+
+LIBROS:
+(1) Forecastig principle and practice - Rob J Hyndman, George Athanasopoulos
+(2) The Analysis of Time Series An Introduction - Chris Chatfield
+
+ARTICULOS:
+(3) Forecasting at Scale - Sean J. Taylor, Benjamin Letham
+(4) Statistical and Machine Learning forecasting methods: Concerns and ways forward - 
+       S. Makridakis, E. Spiliotis, V. Assimakopoulos
+(5) Meta-learning how to forecast time series - Thiyanga S Talagala, Rob J Hyndman and George Athanasopoulos
+
+
+En el siguiente documento se hace un profundo an?lisis principalmente de la variable "tempMac" que es la serie de tiempo,
+que mide la temperatura interna de la maceta, recordad que este variable es el resultado de la agregaci?n de dos variables hermanas.
+
+El intervalo del an?lisis corresponde al [2018-2019], el objetivo es comprender en profundidad la naturaleza de este
+fen?meno f?sico desde un punto de vista dirigido por datos, el modelado y conclusiones deben hacerse con el ?nimo de
+generalizar as? las causas de las variaciones y anomal?as existentes, para poder realizar predicciones no solo con la
+maxima precisi?n posible sino con el conocimiento a priori de cuales son nuestros limites.
+
+
+#CONVERSION
+
+```{r}
+library(forecast)
+library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tsfeatures)
+library(tidyverse)
+library(ForecastComb)
+library(imputeTS)
+library(reshape2)
+library(gridExtra)
+library(PerformanceAnalytics)
+
+route  = "./MODELS/"
+route_proc = "../../DATA/DATA_UMU/PROC/"
+freq.daily <- 48
+ts.daily <- paste(route_proc, "ts.daily.rds", sep="") %>%  readRDS()
+ts.daily.broken <- paste(route_proc, "ts.daily.broken.rds", sep="") %>%  readRDS()
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+```
+
+
+
+He decidido ingorar la opci?n de a?adir una temporalidad (seasonality) anual a las timeSeries.
+Debido a que en 2017 existieron grandes periodos de tiempo en los que los sensores no funcionaron, interpolar esos datos es dificil y en el caso de hacerlo se introducir?a un fuerte sesgo. Por este motivo tomo las series de tiempo como unifrecuencia (diaria).
+
+
+## Frecuencia diaria
+
+Existen diferentes posibilidades a la hora de establecer la frecuencia de una serie temporal relativa a un fen?meno f?sico como es la
+temperatura. Para empezar viene bien establecer la definici?n de frecuencia segun Hyndeman, el creador del paquete *forecast*:
+
+
+Es intuitivo establecer este patr?n de *'seasonality'* o estacionalidad como diario, en ese caso dado que hemos resampleado nuestros sensores a una tasa de 1 observaci?n cada media hora, si un dia posee 24 horas entonces tendremos 48 observaciones y ese valor 
+justamente es la *frequency*.
+
+Ahora bien, es razonable el pensar que el fen?meno f?sico de la temperatura tiene una estacionalidad anual adem?s de diar?a. Pero para crear un serie temporal con un tipo de estacionalidad determinada se necesitan al menos 2 periodos (consecutivos) completos, los datos de 2018 son aceptables, pero en los de 2017 hay grandes periodos en los que los sensores por motivos desconocidos no funcionaron, simplemente hay informaci?n perdida, si decidiera interpolarla debido a su extensi?n se crear?a un fuerte sesgo que comprometer?a todo el an?lisis, por este motivo he decido desechar 2017 y utilizar unicamente 2018 y lo que pueda de 2019. Si en un momento futuro 
+tuviera suficiente informaci?n de calidad tendr?a que cambiar la representaci?n interna de las series de tiempo, utilizando una 
+serie temporal de estacionalidad compleja, es decir un objeto **msts** que proporciona el mismo paquete *forecast*.
+
+
+```{r}
+freq.daily <- 48 
+h.days = 7 
+```
+
+El *forecast horizont* es el periodo de tiempo que se quiere predecir, para este estudio, se va a fijar a una semana. Se considera por tanto que estamos haciendo forecasting a corto-medio plazo.
+
+
+```{r}
+ts.daily <- ts(data = pleiadesGH.v2.interp[,2:ncol(pleiadesGH.v2)],
+                      start = c(1),
+                      frequency = freq.daily)
+
+ts.daily.broken <- ts(data = pleiadesGH.v2[,2:ncol(pleiadesGH.v2)],
+                      start = c(1),
+                      frequency = freq.daily)
+
+if(F){
+saveRDS(ts.daily, paste(route_proc, "ts.daily.rds", sep=""))
+saveRDS(ts.daily.broken, paste(route_proc, "ts.daily.broken.rds", sep=""))
+}
+```
+
+En el llamado *ts.daily* esta la serie de tiempo que contiene todas las variables (sensores). Una serie de tiempo puede entenderse 
+como una matriz de datos que estan indexados por una referencia temporal com?n: 
+
+```{r}
+head(ts.daily, 49)
+```
+
+
+El objeto *ts* contabiliza el tiempo de una forma especial, prescinde de fechas de cualquier formato y representa los instantes 
+con dos n?meros enteros, ganando as? sencillez a la hora de establecer el periodo estacional.
+
+El inicio de la serie de tiempo es as? : c(1,1) . De esta forma se esta diciendo que se empieza en el d?a n?1, en la observaci?n n?1, 
+las 00:00. Asimismo la siguiente observacion sera la c(1,2), indicando que estamos en el primer perido estacional (primer d?a) y segunda observaci?n, la correspondiente a las 00:30 am. La ?ltima observaci?n del primer d?a es la c(1,48). Un d?a se ha roto en 48 trozos y ese es el n?mero real que indexa la serie. El segundo d?a se codifica as? c(2,x) siendo x en el rango [1,48]. 
+
+Ahora se puede entender con mucha facilidad el siguiente resultado:
+```{r}
+ts.daily
+```
+
+La serie va desde el dia 1 hasta el dia n? 365, inclusive.
+
+
+Visualizemos ahora por curiosidad la temperatura de la maceta y la temperatura interior del aire
+
+```{r}
+autoplot(ts.daily[, "tempMac"],  series = "FIXED") + 
+autolayer(ts.daily.broken[, "tempMac"], series = "ORIGINAL") + 
+  ggtitle("Temperatura maceta 2018") + labs(x="time(days)", y="?C")
+
+autoplot(ts.daily[, "tempInt"],  series = "FIXED") + 
+autolayer(ts.daily.broken[, "tempInt"], series = "ORIGINAL") + 
+  ggtitle("Temperatura interior 2018") + labs(x="time(days)", y="?C")
+```
+
+En rojo se muestran los intervalos de tiempo perdidos y que han sido interpolados.
+
+# VISUALIZACI?N
+
+# AN?LISIS I
+## Autocorrelacion
+
+
+```{r}
+
+cbind(TEMPINT = ts.daily[,"tempInt"]) %>% 
+  autoplot() + theme_bw() + labs(y = "?C")
+    ggsave("serieTemporal.jpeg",
+         width = 12,
+         dpi = 200,
+         height = 4,
+         path = "./exportsPleiades")
+
+autoplot(ts.daily[,"tempInt"] %>%
+           window(start = 150, end = 200)) +
+  theme_bw() + labs(y = "?C")+
+    ggsave("serieTemporalDetalle.jpeg",
+         width = 12,
+         dpi = 200,
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+https://otexts.com/fpp2/autocorrelation.html
+
+#### Diaria
+```{r}
+#Se hace solo de un mes cualquiera, en este caso Junio,puesto que
+#si se hace de 1 a?o al variar las temperatuas de forma poderosa
+#el resultado es extra?o, tal y como puede verse en el segundo diagrama.
+
+month = 9
+day   = 12
+
+ggAcf(window(ts.daily[, "tempMac"], start = month*31 + day, end = month*31 + day + 1)) +
+  ggtitle("tempMac ACF Diar?a") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempMacDailyMayo.jpeg", path = "./exportsPleFcast")
+
+#Desde mi punto de vista el resultado anterior es m?s intuitivo pues es normal que
+#en las horas de noche la correlacion sea fuerte y negativa.
+
+
+ts.daily[, c("tempInt")] %>%
+  window() %>%
+    ggAcf(48*7) + 
+      theme_bw() + ggtitle("bla bla")
+```
+ 
+#### Semanal
+```{r}
+ggAcf(window(ts.daily[, "tempMac"], start = 1, end = 200 ))+
+  ggtitle("Temperatura Interior") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempMacDailySemanal.jpeg", path = "./exportsPleFcast")
+#A medio plazo (digamos una semana), las temperatura sigue claramente un patron cuya fuerza
+#decae lentamente conforme las temperatuas generales van cambiando.
+```
+ 
+#### Mensual
+```{r}
+ggAcf(window(ts.daily[, "tempMac"], start = 5*31, end = 6*31 ), lag = 48*30) +
+  ggtitle("tempMac ACF Mensual") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempMacDailyMensuall.jpeg", path = "./exportsPleFcast")
+#Este es el mismo caso que el anterior gr?fico pero m?s exagerado.
+``` 
+
+### Anual
+```{r}
+#Aqui el efecto estacional anual es poderoso y resulta curioso que la correlaci?n
+#sea totalmente positiva.
+ggAcf(window(ts.daily[, "tempMac"]), lag = 48) +
+  ggtitle("tempMac ACF Anual") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempMacDailyAnual.jpeg", path = "./exportsPleFcast")
+
+#El resultado segun mi percepci?n esta diciendo que en un A?O, las temperaturas 
+#en cada momento del dia son relativamente parecidas, sobre todo al principio (00:00)
+#y al final (23:30), lo cual tiene bastante sentido.
+
+```
+
+
+
+#### Anual
+```{r}
+ggAcf(window(ts.daily[, "tempMac"])) +
+  ggtitle("tempMac ACF Anual") +
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+#("acfTempMacDailyAnual.jpeg", path = "./exportsPleFcast")
+```
+
+En un principio se podr?a pensar que el siguiente grafico deberia parecerse al grafico correspondiente a la correlaci?n diaria. Sin embargo el resultado es distinto.
+
+En primar lugar n?tese como la distribuci?n no es simetrica en el diagrama de temperaturas en crudo,
+tampoco lo va a ser en el diagrama acf correspondiente.
+El tramo de calentamiento [0-220 aprox] es notablemente mas largo que el de enfriamiento [220 - 360]
+
+El motivo de esa diferencia es el final del a?o, en concreto desde el dia 250 al 365 existe una temperatura distinta, mas fria, que la inicial del a?o.
+
+Ademas observar que la pendiente o 'trend' de la segunda mitad del a?o es ligermante m?s fuerte, lo que indica que la temperatura vari? mas en esta parte del a?o.
+
+Como punto final los brazos de la primera mitad del a?o son notablemente mas gruesos que los de la segunda mitad.
+
+Se afirma con seguridad que existen dos temporalidades o 'seasonalities'. Una a corto plazo (diaria) y otra
+a largo plazo o anual.
+
+
+Pasa algo extra?o en los dias 50 - 100
+
+```{r}
+acf(window(ts.daily[, "tempMac"], start = 50, end = 100 ), lag = 48*50)
+```
+Este grafico puede ser prescindible, yo lo atribuyo a que el grueso de la ts (Variaci?n) en los dias 50-100
+es alta y las posibles autocorrelaciones por la noche son fuertemente postivas con el lag 0 mientras que por 
+la dia son fuertemente negativas debido a que se empieza a entrar en una fase mas calurosa.
+
+## Descomposici?n STL
+
+### Temperatura  interior
+```{r}
+#------Mensual
+ts.daily. <- window(ts.daily[, "tempInt"])
+ts.daily.stl<-stl(ts.daily.mayo.tm, s.window = 49, t.window = 48*7, robust = T)
+
+ts.daily.stl %>% autoplot() +
+  ggtitle("Descomposici?n STL temperatura interior [anual]")+
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5))
+    ggsave("STL.jpeg",
+         width = 12,
+         dpi = 200,
+         height = 9,
+         path = "./exportsPleiades")
+
+```
+
+
+Se puede observar que el patron de:  seasonality + trend, explica bien el comportamiento de la serie.
+Aunque hay demasiado informaci?n en el remainder.
+
+
+En el caso mensual, se observa que el remainder no es un "white noise", esta  correlacionado. Todav?a hay un patron latente que no se puede explicar con la descomposici?n STL.
+
+Sin embargo el caso anual es muy intersante puesto que la serie queda bastente explicada, el remainder es un white noise muy claro.
+
+```{r}
+#----Extraccion del componente "remainder"
+ts.daily.rmdrAdj.tempInt <- ts.daily.stl$time.series[, "seasonal"] + ts.daily.stl$time.series[, "trend"]
+
+
+
+#--Caso tempInt
+ 
+autoplot(ts.daily[, "tempInt"], series = "original") +
+  autolayer(ts.daily.rmdrAdj.tempInt, series = "sin remainder", alpha = 0.7) +
+  theme_bw()+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank(),
+        legend.spacing.x = unit(1,"mm")) +
+  labs(y = "?C")+
+  ggtitle("Temperatura interior")+
+  ggsave("tempIntNoRemainder.jpeg",
+         width = 12,
+         dpi = 200,
+         height = 4,
+        path = "./exportsPleFcast")
+
+autoplot(ts.daily[, "tempInt"] %>% window(start = 300, end = 320),
+         series = "original")+
+  autolayer(ts.daily.rmdrAdj.tempInt  %>% window(start = 300, end = 320),
+            series = "sin remainder", alpha = 0.7) +
+  theme_bw()+
+  theme(legend.position = "bottom",
+        plot.title = element_text(hjust = 0.5),
+        legend.title = element_blank(),
+        legend.spacing.x = unit(1,"mm")) +
+  labs(y = "?C")+
+  ggtitle("Temperatura interior")
+
+```
+
+Observar como se suaviza el patron estacional, los picos ruidosos son dificiles de predecir. Aunque hay partes donde el ruido 
+es muy fuerte, por ejemplo en el intervalo [75 - 90] y en general en la segunda parte (enfriamiento) del a?o. Podr?a ser intersante averiguar el motivo [Consultar Alfonso].
+
+
+```{r}
+ts.daily[, "tempInt"] %>% acf(lag.max = 48)
+ts.daily[, "tempInt"] %>% diff(48) %>% acf(lag.max = 48)
+ts.daily.rmdrAdj.tempInt %>% acf(lag.max = 48)
+```
+
+

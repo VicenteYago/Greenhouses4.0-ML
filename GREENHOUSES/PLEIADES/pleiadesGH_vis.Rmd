@@ -1,0 +1,1474 @@
+---
+title: "PleiadesGreenhouse"
+author: "Jose Vicente Yago Martinez"
+date: "4/3/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+
+```{r}
+library(forecast)
+#library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tsfeatures)
+library(tidyverse)
+#library(ForecastComb)
+library(imputeTS)
+library(reshape2)
+library(gridExtra)
+library(xts)
+#library(PerformanceAnalytics)
+```
+
+```{r}
+route  = "./MODELS/"
+route_proc = "../../DATA/DATA_UMU/PROC/"
+source("../../GREENHOUSES/funciones/forecastingFuns.R")
+source("../../GREENHOUSES/funciones/maxDailyTime.R")
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+
+
+rad.maxs.filled<-max.daily.time(pleiadesGH.v2.interp$time, pleiadesGH.v2.interp$radExt)
+```
+
+
+# HISTOGRAMAS
+## Humedad 
+```{r}
+
+#RELATIVA
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=humExt.R, y=..density..),binwidth=1,
+                alpha = 0.5, colour="black", fill="red")+
+# scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+# coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Humedad exterior relativa")+
+ labs(x = "%")
+#ggsave("histogramaTempExt.jpeg", path = "./exportsPleiades")
+
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=humInt.R, y=..density..),binwidth=1,
+                alpha = 0.5, colour="black", fill="green")+
+# scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+# coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Humedad interior relativa")+
+ labs(x = "%")
+#ggsave("histogramaTempExt.jpeg", path = "./exportsPleiades")
+
+#ESPEC?FICA
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=humExt.E, y=..density..),binwidth=0.0002,
+                alpha = 0.5, colour="black", fill="red")+
+# scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+# coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Humedad exterior espec?fica")+
+ labs(x = "g/kg(d.a)")
+#ggsave("histogramaHumExtE.jpeg", path = "./exportsPleiades")
+
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=humInt.E, y=..density..),binwidth=0.0002,
+                alpha = 0.5, colour="black", fill="green")+
+# scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+# coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Humedad interior espec?fica")+
+ labs(x = "g/kg(d.a)")
+#ggsave("histogramaHumIntE.jpeg", path = "./exportsPleiades")
+
+```
+
+## Temperaturas
+```{r}
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=tempExt, y=..density..),binwidth=1,
+                alpha = 0.5, colour="black", fill="red")+
+ scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+ coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Temperatura exterior")+
+ labs(x = "?C")
+ggsave("histogramaTempExt.jpeg", path = "./exportsPleiades")
+
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=tempInt, y=..density..),binwidth=1,
+                alpha = 0.5, colour="black", fill="green")+
+ scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+ coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Temperatura interior")+
+ labs(x = "?C")
+ggsave("histogramaTempInt.jpeg", path = "./exportsPleiades")
+
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<as.POSIXct("2018-5-1 00:00"),]) + 
+ geom_histogram(aes(x=tempMac, y=..density..),binwidth=1,
+                alpha = 0.5, colour="black", fill="blue")+
+ scale_x_continuous(breaks = seq(0, 50, 5))+
+ theme(plot.title = element_text(hjust = 0.5))+
+ coord_cartesian(xlim = c(0, 50))+
+ ggtitle("Temperatura maceta")+
+ labs(x = "?C")
+ggsave("histogramaTempMac.jpeg", path = "./exportsPleiades")
+
+```
+
+## Velocidad viento
+```{r}
+ggplot(pleiadesGH.v2.interp) + 
+ geom_histogram(aes(x=vientoVelo, y=..density..),binwidth=0.25,
+                alpha = 0.5, colour="black", fill="red")+
+ scale_x_continuous(breaks = seq(0, 40, 2.5))+
+ theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal")
+
+```
+
+## Radiaci?n solar
+```{r}
+ggplot(pleiadesGH.v2.interp) + 
+ geom_histogram(aes(x=radExt, y=..density..),binwidth=2,
+                alpha = 0.5, colour="black", fill="red")+
+ scale_x_continuous(breaks = seq(0, max(pleiadesGH.v2.interp$radExt), 100))+
+
+ theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal")
+
+```
+
+# VISUALIZACI?N
+
+```{r}
+iniv = as.POSIXct("2018-12-1 00:00")
+finv = as.POSIXct("2018-12-8 00:00")
+scale <- scale_x_datetime(breaks = seq(iniv, finv, "1 day"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+```
+
+
+## Humedad
+```{r}
+alpha = 0.3
+
+ylimH.E = max(pleiadesGH.v2.interp$humInt.E)
+
+ggplotHumidities.E<-function(gh, name){
+  ggplot(data = gh, aes(x = time)) +
+    geom_line(aes(  y = humInt.E, color = 'Interior'))+
+    geom_point(aes( y = humInt.E, color = 'Interior'),alpha = alpha)+
+    
+    geom_line(aes(  y = humExt.E, color = 'Exterior' ))+
+    geom_point(aes( y = humExt.E, color = 'Exterior' ),alpha = alpha) +  
+    
+    geom_line(aes( y = riego*ylimH.E, color = 'Irrigation'),linetype= 'longdash')+
+    geom_line(aes(rad.maxs.filled$V1,rad.maxs.filled$V2*ylimH.E, color = "RadMax"),size = 0.4)+
+    
+    scale_colour_manual(values  = 
+                          c('Interior' = 'springgreen1',
+                            'Exterior' =  'firebrick',
+                            'Irrigation'    =  'blue',
+                            'RadMax'   =   'orange'))+
+    ggtitle(name)+
+    labs(x =NULL, y = "g/kg(d.a)")+ theme_gray()+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"),
+          axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+}
+
+ggplotHumidities.R<-function(gh, name){
+  ggplot(data = gh, aes(x = time)) +
+    geom_line(aes( y = humInt.R, color = 'Interior'))+
+    geom_point(aes( y = humInt.R, color = 'Interior'))+
+    
+    geom_line(aes( y = humExt.R, color = 'Exterior' )) +
+    geom_point(aes( y = humExt.R, color = 'Exterior' )) +  
+    
+    geom_line(aes( y = riego*100, color = 'Irrigation'),linetype= 'longdash')+
+    geom_line(aes(rad.maxs.filled$V1,rad.maxs.filled$V2*100, color = "RadMax"), size = 0.4)+
+    
+    scale_colour_manual(values  = 
+                          c('Interior' = 'springgreen1',
+                            'Exterior' =  'firebrick',
+                            'Irrigation'    =  'blue',
+                            'RadMax'   =   'orange'))+
+    ggtitle(name)+
+    labs(x =NULL, y = "%")+ theme_gray()+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm")
+          #,
+          #axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)
+          )
+}
+
+
+ggHumedades.R<-ggplotHumidities.R(pleiadesGH.v2.interp,
+                                  "Relative Humidity in December 2018")
+
+
+
+#######################
+
+
+ggHumedades.E<-ggplotHumidities.E(pleiadesGH.v2.interp,
+                                  "Specific Humidity in December 2018")
+
+
+
+#tiff("humedadesRDiciembr.tiff", units="cm", width = 8, height = 6, res = 600)
+ggHumedades.R+ 
+  coord_cartesian(xlim = c(iniv, finv),
+                  ylim = c(0, 100)) + 
+#dev.off()
+  ggsave("humedadesRDiciembre.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+
+ggHumedades.E+ 
+  coord_cartesian(xlim = c(iniv, finv),
+                  ylim = c(0, ylimH.E)) +
+#  scale+
+  ggsave("humedadesEDiciembre.jpeg",
+       width = 12,
+       dpi = 600,
+       height = 6,
+       units = "cm",
+       path = "./exportsPleiades")
+```
+
+
+
+
+
+
+## Temperatura
+
+```{r}
+ylimT = max (pleiadesGH.v2.interp$tempInt)
+
+alpha = 0.5
+ggplotTemperatures<-function(gh, name){
+  ggplot(data = gh, aes(x = time)) +
+    geom_line(aes(y = tempInt, color = 'Interior')) +
+    geom_point(aes(y = tempInt, color = 'Interior'), alpha = 0.5) +
+    
+    geom_line(aes( y = tempMac, color = 'Pot')) +
+    geom_point(aes( y = tempMac, color = 'Pot'), alpha = 0.5) +
+    
+    geom_line(aes( y = tempExt, color = 'Exterior')) +
+    geom_point(aes( y = tempExt, color = 'Exterior'), alpha = 0.5) +
+    
+    geom_line(aes( y = riego*ylimT, color = 'Irrigation'),linetype= 'longdash', na.rm = TRUE)+
+    geom_line(aes(rad.maxs.filled$V1,rad.maxs.filled$V2*ylimT,color = "RadMax"), size = 0.4)+
+    scale_colour_manual(values  = 
+                          c('Interior'   =  'firebrick',
+                            'Pot'   =  'springgreen1',
+                            'Exterior'   =  'mediumpurple1',
+                            'Irrigation'     =  'blue',
+                            'RadMax'    =  'orange'))+    
+      
+    labs(x =NULL, y = "ºC") + 
+    ggtitle(name)+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))
+
+}
+
+
+ggTemperaturas<-ggplotTemperatures(pleiadesGH.v2.interp, "Temperatures in December 2018")
+
+ggTemperaturas +
+  coord_cartesian(xlim = c(iniv, finv),
+                  ylim = c(0, ylimT)) +
+#  scale+
+  ggsave("temperaturasGlobal.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+```
+
+## Viento
+```{r}
+ylimV = max(pleiadesGH.v2.interp$vientoVelo)
+alpha = 0.8
+plot.viento <- ggplot(data = pleiadesGH.v2.interp, aes( x = time)) + 
+  geom_line( aes( y = vientoVelo)) +
+  geom_point( aes( y = vientoVelo,color = "viento"), alpha = alpha ) +
+#  geom_line(aes( y = riego*ylimV, color = 'Riego'),
+#           linetype= 'longdash', na.rm = TRUE)+
+#  geom_line(aes(rad.maxs.filled$V1,rad.maxs.filled$V2*ylimV,color = "RadMax"),size = 0.4)+
+  
+  
+  scale_colour_manual(values  = 
+                          c('viento'   =  'lightskyblue',
+                            'Riego'     =  'blue',
+                            'RadMax'    =  'orange'))+ 
+  
+  
+  
+  theme_gray()+
+  ggtitle("Wind speed")+
+  labs(x =NULL, y = "m/s") +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+
+plot.viento + 
+  coord_cartesian(xlim = c(iniv, finv),
+                  ylim = c(0,ylimV)) +
+  scale
+#ggsave("vientoDia.jpeg", path = "./exportsPleiades")
+
+```
+
+
+
+## Radiaci?n
+```{r}
+alpha = 0.8
+ylimR = max(pleiadesGH.v0.interp$radExt)
+plot.radiacion = ggplot(data = pleiadesGH.v0.interp, aes(x = time)) + 
+  geom_line( aes(y = radExt)) + 
+  geom_point( aes( y = radExt, color = "radExt"),alpha=alpha, ) +
+
+#  geom_line(aes(rad.maxs.filled$V1,rad.maxs.filled$V2*ylimR, color = "radExt"), size = 0.4)+
+#  geom_line(aes( y = riego*ylimR, color = 'Riego'),linetype= 'longdash', na.rm = TRUE)+
+  
+  scale_colour_manual(values  = 
+                          c('radExt'   =  'orange',
+                            'Riego'     =  'blue'))+ 
+  
+  labs(title = NULL, x =NULL, y = "W/m?")+
+  theme_gray()+
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+
+
+plot.radiacion + 
+  coord_cartesian(xlim = c(iniv, finv),
+                  ylim = c(0, ylimR))+
+  scale+
+  ggtitle("Solar irradiation")
+#ggsave("solarRadDia.jpeg", path = "./exportsPleiades")
+```
+
+
+# AUTOCORRELACI?N
+
+```{r}
+lag = 48 *5 # 1 dia * 5
+```
+
+## HumIntE
+```{r}
+ggAcf(pleiadesGH.v2.interp$humInt.E, lag = lag) +
+  ggtitle("Interior humidity ratio")+
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+## TempInt
+
+```{r}
+ggAcf(pleiadesGH.v2.interp$tempInt, lag = lag)+
+  ggtitle("Interior temperature")+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempInt.jpeg", path = "./exportsPleiades")
+```
+
+## TempMac
+```{r}
+ggAcf(pleiadesGH.v2.interp$tempMac, lag = lag)+
+  ggtitle("Interior pot temperature")+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempMac.jpeg", path = "./exportsPleiades")
+```
+
+##HumExtE
+```{r}
+ggAcf(pleiadesGH.v2.interp$humInt.E, lag = lag) +
+  ggtitle("Exterior humidity ratio")+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfHumExtE.jpeg", path = "./exportsPleiades")
+```
+
+##TempExt
+```{r}
+ggAcf(pleiadesGH.v2.interp$tempExt, lag = lag)+
+  ggtitle("Exterior temperature")+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfTempExt.jpeg", path = "./exportsPleiades")
+```
+
+##RadExt
+```{r}
+ggAcf(pleiadesGH.v2.interp$radExt, lag = lag)+
+  ggtitle("Exterior solar irradiation")+
+  theme(plot.title = element_text(hjust = 0.5))
+
+#ggsave("acfRadExt.jpeg", path = "./exportsPleiades")
+```
+
+##VientoVelo
+```{r}
+ggAcf(pleiadesGH.v2.interp$vientoVelo, lag = lag)+
+  ggtitle("Exterior solar irradiation")+
+  theme(plot.title = element_text(hjust = 0.5))
+#ggsave("acfViento.jpeg", path = "./exportsPleiades")
+```
+
+
+# CORRELACI?N CRUZADA
+## INTERIOR
+
+### Temperatura maceta  - temperatura 
+```{r}
+values1 <- pleiadesGH.v2.interp$tempMac
+values2 <- pleiadesGH.v2.interp$tempInt
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+### Humedad  - temperatura 
+```{r}
+values1 <- pleiadesGH.v2.interp$humInt.E
+values2 <- pleiadesGH.v2.interp$tempInt
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+### Humedad  - temperatura maceta
+```{r}
+values1 <- pleiadesGH.v2.interp$humInt.E
+values2 <- pleiadesGH.v2.interp$tempMac
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+## EXTERIOR - INTERIOR
+### TempExt - TempInt
+```{r}
+values1 <- pleiadesGH.v2.interp$tempExt
+values2 <- pleiadesGH.v2.interp$tempInt
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+### HumExt - TempInt
+```{r}
+values1 <- pleiadesGH.v2.interp$humExt.E
+values2 <- pleiadesGH.v2.interp$tempInt
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+
+# ESTUDIO CORRELACI?N
+
+```{r}
+chart.Correlation(pleiadesGH.v2.interp[,2:ncol(pleiadesGH.v2)],
+                  histogram = F,
+                  dpi ="print")
+```
+
+### HumR HumE - Interior
+
+```{r}
+maxHE <- max(pleiadesGH.v2.interp$humInt.E)
+maxT  <- max(pleiadesGH.v2.interp$tempInt)
+maxHR <- 100
+
+stepT  <- 3
+stepHE <- 0.0012
+stepHR <- 5
+ 
+scaleX.HR <- scale_x_continuous(breaks = seq(0, maxHR, stepHR))
+scaleX.HE <- scale_x_continuous(breaks = seq(0, maxHE, stepHE))
+scaleX.T  <- scale_x_continuous(breaks = seq(0, maxT,  stepT))
+
+scaleY.HR <- scale_y_continuous(breaks = seq(0, maxHR, stepHR))
+scaleY.HE <- scale_y_continuous(breaks = seq(0, maxHE, stepHE))
+scaleY.T  <- scale_y_continuous(breaks = seq(0, maxT, stepT))
+
+
+```
+
+
+
+```{r}
+  ggplot(pleiadesGH.v2.interp) + 
+  geom_point(aes(humInt.R, humInt.E,
+                 color = tempInt,
+                 size = as.numeric(riego)))+
+  scale_colour_gradient(low = "blue", high = "red")+ 
+  scale_alpha(range = c(0, 0.5), guide = FALSE) +
+
+   geom_density2d(aes(humInt.R, humInt.E),
+                  show.legend = F,
+                  contour = T,
+                  colour = "black") + 
+  
+  scale_size_continuous(name="Riego", breaks = c(0,1))+
+  coord_cartesian(xlim = c(0, maxHR),
+                  ylim = c(0, maxHE))+
+  scaleX.HR+
+  scaleY.HE+
+  ggtitle("HumInt.R-HumInt.E[GHv2]")+
+  theme_gray() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+  labs(x = "Interior relative humidity (%)", y = "Interior humidity ratio g/kg(d.a)")
+
+#ggsave("cmpHumREInterior.jpeg", path = "./exportsPleiades")
+
+```
+
+### HumR HumE - Exterior
+```{r}
+plot.dens.int.GH2<-
+  ggplot(pleiadesGH.v2.interp) + 
+  geom_point(aes(humExt.R,humExt.E, 
+                 color = tempInt,
+                 size = as.numeric(riego)))+
+  scale_colour_gradient(low = "blue", high = "red")+ 
+  scale_alpha(range = c(0, 0.5), guide = FALSE) +
+
+   geom_density2d(aes(humExt.R,humExt.E),
+                  show.legend = F,
+                  contour = T,
+                  colour = "black") + 
+  
+
+  scale_size_continuous(name="Riego", breaks = c(0,1))+
+  coord_cartesian(xlim = c(0, maxHR),
+                  ylim = c(0, maxHE))+
+  scaleX.HR+
+  scaleY.HE+
+  ggtitle("HumExt.R-HumExt.E[GHv2]")+
+  theme_gray() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+  labs(x ="Exterior relative humidity (%)", y = "Exterior humidity ratio g/kg(d.a)")
+
+plot.dens.int.GH2 
+#ggsave("cmpHumREExterior.jpeg",plot.dens.int.GH2, path = "./exportsPleiades")
+
+```
+
+## INTERIOR
+#### TempInt HumIntR/E
+```{r}
+#Con humedad especifica
+
+  ggplot(pleiadesGH.v2.interp) + 
+  geom_point(aes(tempInt, humInt.R,
+                 color = radExt,
+                 size = as.numeric(riego)))+
+  scale_colour_gradient(low = "blue", high = "red")+ 
+  scale_alpha(range = c(0, 0.5), guide = FALSE) +
+
+   geom_density2d(aes(tempInt, humInt.R),
+                  show.legend = F,
+                  contour = T,
+                  colour = "black") + 
+  
+  
+  stat_quantile(aes(tempInt, humInt.R), formula=y ~ poly(x, 3),
+                color = "green",size =1,quantiles = c(0.25,0.75)) +
+
+  scale_size_continuous(name="Riego", breaks = c(0,1))+
+  coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxHR))+
+  scaleX.T+
+  scaleY.HR+
+  ggtitle("HumInt.R-TempInt-Riego-TempMac [GHv2]")+
+  theme_gray() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+  labs(x ="Interior Temperature (?C) ", y = "Interior relative humidity (%)" )
+
+#ggsave("humIR-tempInt-Riego-TempMAc.jpeg", path = "./exportsPleiades")
+
+#-------------------------------------------------------------------------#
+
+ggplot(pleiadesGH.v2 ) + 
+  geom_point(aes(tempInt, humInt.E,
+                 color = radExt,
+                 size = as.numeric(riego)))+
+  scale_colour_gradient(low = "blue", high = "red")+ 
+  scale_alpha(range = c(0, 0.5), guide = FALSE) +
+
+  geom_density2d(aes(tempInt, humInt.E),
+                  show.legend = F,
+                  contour = T,
+                  colour = "black") + 
+  
+  coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxHE))+
+  scaleX.T+
+  scaleY.HE+
+  scale_size_continuous(name="Riego", breaks = c(0,1))+
+
+  ggtitle("HumInt.E-TempInt-Riego-TempMac [GHv2]")+
+  theme_gray() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+  labs(x ="Interior Temperature (?C)" , y = "Interior humidity ratio g/kg(d.a)")
+
+#ggsave("humIE-tempInt-Riego-TempMAc.jpeg", path = "./exportsPleiades")
+
+```
+
+```{r}
+
+pleiadesGH.v2.km<-clustering.kmeans(pleiadesGH.v2, 2, c("tempInt", "humInt.E"))[[1]]
+
+
+ggplot(pleiadesGH.v2.km ) + 
+    geom_point(aes(tempInt, humInt.E,
+                 shape = clusters,
+                 color = radExt)) +
+    scale_shape_manual(values = c(1, 13) )+
+    scale_colour_gradient(low = "blue", high = "red")+
+    
+    geom_vline(xintercept = 3, linetype="dashed", color = "blue")+
+    geom_vline(xintercept = 21, linetype="dashed", color = "blue")+
+    geom_vline(xintercept = 25, linetype="dashed", color = "red")+
+    geom_vline(xintercept = 35, linetype="dashed",color = "red")+
+    
+    geom_hline(yintercept=0.0024, linetype="dashed", color = "blue")+
+    geom_hline(yintercept=0.0090, linetype="dashed", color = "blue")+
+    geom_hline(yintercept=0.0040, linetype="dashed", color = "red")+
+    geom_hline(yintercept=0.0126, linetype="dashed", color = "red")+
+
+    geom_density2d(data = pleiadesGH.v2.km[pleiadesGH.v2.km$clusters == 1 &
+                                           pleiadesGH.v2.km$tempInt>3 &
+                                           pleiadesGH.v2.km$tempInt<21 &
+                                           pleiadesGH.v2.km$humInt.E>0.0024 &
+                                           pleiadesGH.v2.km$humInt.E<0.0090, ],
+                   aes(tempInt, humInt.E),
+                   show.legend = F,
+                   contour = T,
+                   colour = "green") +
+  
+    geom_density2d(data = pleiadesGH.v2.km[pleiadesGH.v2.km$clusters == 2 &
+                                           pleiadesGH.v2.km$tempInt>25 &
+                                           pleiadesGH.v2.km$tempInt<35 &
+                                           pleiadesGH.v2.km$humInt.E>0.0040 &
+                                           pleiadesGH.v2.km$humInt.E<0.0126, ],
+                   aes(tempInt, humInt.E),
+                   show.legend = F,
+                   contour = T,
+                   colour = "green") +
+  
+  
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxHE))+
+    ggtitle("TempInt-HumInt.E fitted by gaussians [process]")+
+    labs(x ="Interior temperature (?C)" , y = "Interior humidity ratio (g/kg(d.a)) ")+
+    scaleX.T+
+    scaleY.HE+
+    theme_bw()+
+    theme(legend.position="bottom",
+          plot.title = element_text(hjust = 0.5))
+ggsave("bigaussianInteriorProcess.jpeg", path = "./exportsPleiades")
+
+
+pleiadesGH.v2.interior.warm<-pleiadesGH.v2.km[pleiadesGH.v2.km$tempInt>3 &
+                                              pleiadesGH.v2.km$tempInt<21 &
+                                              pleiadesGH.v2.km$humInt.E>0.0024 &
+                                              pleiadesGH.v2.km$humInt.E<0.0090,]
+
+pleiadesGH.v2.interior.cold<-pleiadesGH.v2.km[pleiadesGH.v2.km$tempInt>25 &
+                                              pleiadesGH.v2.km$tempInt<35 &
+                                              pleiadesGH.v2.km$humInt.E>0.0040 &
+                                              pleiadesGH.v2.km$humInt.E<0.0126,]
+
+interior.warm.normal<-mvrnorm(n = nrow(pleiadesGH.v2.interior.warm),
+                  mu = apply(pleiadesGH.v2.interior.warm[,c("tempInt", "humInt.E")],
+                             2, mean),
+                  Sigma = cov(pleiadesGH.v2.interior.warm[,c("tempInt", "humInt.E")]))
+
+
+interior.cold.normal<-mvrnorm(n = nrow(pleiadesGH.v2.interior.cold),
+                  mu = apply(pleiadesGH.v2.interior.cold[,c("tempInt", "humInt.E")],
+                             2, mean),
+                  Sigma = cov(pleiadesGH.v2.interior.cold[,c("tempInt", "humInt.E")]))
+
+
+interior.warm.normal.pleiades <- as.data.frame(interior.warm.normal)
+interior.cold.normal.pleiades <- as.data.frame(interior.cold.normal)
+
+ggplotBivariateEllipses(interior.warm.normal.pleiades, interior.cold.normal.pleiades,
+                       scaleX.T, scaleY.HE,
+                       0, maxT, 0, maxHE,
+                       "Interior temperature (?C)",
+                       "Interior humidity ratio (g/kg(d.a))",
+                       "TempInt-HumInt.E fitted by gaussians")
+
+ggsave("bigaussianInterior.jpeg",path = "./exportsPleiades")
+
+
+
+```
+
+
+
+
+
+
+
+
+
+## EXTERIOR
+
+#### TempExt - HumExtR/E
+```{r}
+
+ggplot(pleiadesGH.v2.interp) + 
+  geom_point(aes(tempExt, humExt.R, 
+                 color = radExt,
+                 size = vientoVelo))+
+  scale_colour_gradient(low = "blue", high = "red")+
+  scale_size(range = c(0, 5))+
+  scale_alpha(range = c(0.00, 0.5), guide = FALSE) +
+
+  geom_density_2d(aes(tempExt, humExt.R),
+                  show.legend=F,
+                  contour = T,
+                  colour = "black")+ 
+    
+  coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxHR))+
+  scaleX.T+
+  scaleY.HR+
+  ggtitle("HumExt.R-TempExt-radExt-humInt [GHv2]")+
+  theme_gray() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+  labs(x = "Exterior Temperature (?C)",
+       y ="Interior relative humidity (%)")
+    
+  ggsave("exteriorR.jpeg", path = "./exportsPleiades")
+```
+
+
+
+
+## EXTERIOR + INTERIOR
+
+#### HumExtR/E - HumIntR/E  
+```{r}
+  ggplot(pleiadesGH.v2.interp) + 
+    geom_point(aes(humExt.R, humInt.R,
+                   size = as.numeric(riego),
+                   color = tempInt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(humExt.R, humInt.R),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+
+  
+    stat_quantile(aes(humExt.R, humInt.R), formula=y ~ poly(x, 5),
+                color = "green",size =1, quantiles = c(0.25,0.75)) +
+  
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    coord_cartesian(xlim = c(0, maxHR),
+                  ylim = c(0, maxHR))+
+    scaleX.HR+
+    scaleY.HR+
+    ggtitle("humInt.R-humExt.R-riego-radExt [GHv2]")+
+    theme_gray() +
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom")  +
+    labs(x ="Relative Exterior humidity (%)",
+         y = "Relative Interior humidity (%)")
+#  ggsave("lluviaRelativa.jpeg", path = "./exportsPleiades")
+  
+#-------------------------------------------------------------------------#
+
+  ggplot(pleiadesGH.v2.interp) +
+    geom_point(aes(humExt.E, humInt.E,
+                   size = as.numeric(riego),
+                   color = tempInt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(humExt.E, humInt.E),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+
+
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    coord_cartesian(xlim = c(0, maxHE),
+                  ylim = c(0, maxHE))+
+    scaleX.HE+
+    scaleY.HE+
+    ggtitle("humInt.E-humExt.E-riego-radExt [GHv2]")+
+    theme_gray() +
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))  +
+    labs(x ="Exterior humidity ratio g/kg(d.a)",
+         y = "Interior humidity ratio g/kg(d.a)")
+ #   ggsave("lluviaEspecifica.jpeg", path = "./exportsPleiades")
+
+
+```
+
+#### TempExt - TempInt por estaciones
+
+```{r}
+spring.init   <- as.POSIXct("2018-3-20 00:00:00")
+summer.init   <- as.POSIXct("2018-6-21 00:00:00")
+autumn.init   <- as.POSIXct("2018-9-23 00:00:00")
+winter.init   <- as.POSIXct("2018-12-21 00:00:00")
+winter.end    <- as.POSIXct("2019-3-20 00:00:00")
+```
+
+#####  INVIERNO
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<spring.init,c("tempInt", "tempExt")] %>% cor #0.68
+
+df.texto <- data.frame(
+  x = c(48),
+  y = c(48),
+  text = c("COR = 0.68")
+)
+
+
+w <-  ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time< spring.init,]) + 
+    geom_point(aes(tempExt, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(tempExt, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(tempExt, tempInt),method='lm', se = F, color = "green", size = 3)+
+  
+    scale_size_continuous(name="Irrigation", breaks = c(0,1))+
+    scaleX.T+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxT))+
+    ggtitle("External/Internal Temperatures WINTER")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+    labs(x = "External Temperature(ºC)", y = "Internal Temperature(ºC)")+
+    ggsave("tempIntExtINV.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+  
+w
+
+```  
+
+
+#####  PRIMAVERA
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>spring.init &
+                      pleiadesGH.v2.interp$time<summer.init,c("tempInt", "tempExt")] %>% cor # 0.77
+
+df.texto <- data.frame(
+  x = c(48),
+  y = c(48),
+  text = c("COR = 0.77")
+)
+
+s <-  ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>spring.init &
+                              pleiadesGH.v2.interp$time<summer.init,]) + 
+    geom_point(aes(tempExt, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(tempExt, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(tempExt, tempInt),method='lm', se = F, color = "green", size = 3)+
+    scale_size_continuous(name="Irrigation", breaks = c(0,1))+
+    scaleX.T+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxT))+
+    ggtitle("External/Internal Temperatures SPRING")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+    labs(x = "External Temperature(ºC)", y = "Internal Temperature(ºC)")+
+        ggsave("tempIntExtPRI.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+s
+```  
+  
+##### VERANO 
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>summer.init &
+                     pleiadesGH.v2.interp$time<autumn.init,c("tempInt", "tempExt")] %>% cor # 0.92
+
+df.texto <- data.frame(
+  x = c(48),
+  y = c(48),
+  text = c("COR = 0.92")
+)
+
+sm <-  ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>summer.init &
+                              pleiadesGH.v2.interp$time<autumn.init,]) + 
+    geom_point(aes(tempExt, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(tempExt, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(tempExt, tempInt),method='lm', se = F, color = "green", size = 3)+
+
+    scale_size_continuous(name="Irrigation", breaks = c(0,1))+
+    scaleX.T+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxT))+
+    ggtitle("External/Internal Temperatures SUMMER")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+    labs(x = "External Temperature(ºC)", y = "Internal Temperature(ºC)")+
+    ggsave("tempIntExtVER.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades") 
+
+sm
+```
+
+
+##### OTO?O
+
+
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>autumn.init &
+                    pleiadesGH.v2.interp$time<winter.init,c("tempInt", "tempExt")] %>% cor # 0.79
+
+df.texto <- data.frame(
+  x = c(48),
+  y = c(48),
+  text = c("COR = 0.79")
+)
+
+
+a <- ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>autumn.init &
+                            pleiadesGH.v2.interp$time<finv,]) + 
+    geom_point(aes(tempExt, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(tempExt, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(tempExt, tempInt),method='lm', se = F, color = "green", size = 3)+
+
+    scale_size_continuous(name="Irrigation", breaks = c(0,1))+
+    scaleX.T+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxT))+
+    ggtitle("External/Internal Temperatures AUTUMN")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+    labs(x = "External Temperature(ºC)", y = "Internal Temperature(ºC)")+
+    ggsave("tempIntExtOTO.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+
+a
+```
+
+
+
+```{r}
+pleiadesGH.v2.interp$season <- NA
+pleiadesGH.v2.interp$r <- NA
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<spring.init,]$season <- "winter"
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time<spring.init,]$r <- "COR = 0.68"
+
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>spring.init &
+                              pleiadesGH.v2.interp$time<summer.init,]$season <- "spring"
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>spring.init &
+                              pleiadesGH.v2.interp$time<summer.init,]$r <- "COR = 0.77"
+
+
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>summer.init &
+                              pleiadesGH.v2.interp$time<autumn.init,]$season <- "summer"
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>summer.init &
+                              pleiadesGH.v2.interp$time<autumn.init,]$r <- "COR = 0.92"
+
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>autumn.init &
+                            pleiadesGH.v2.interp$time<finv,]$season <- "autumn"
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>autumn.init &
+                            pleiadesGH.v2.interp$time<finv,]$r <- "COR = 0.79"
+
+pleiadesGH.v2.interp <- pleiadesGH.v2.interp %>% 
+                          na.omit() %>%
+                            mutate(season_f = factor(season,
+                                                        levels = c("winter", "spring",
+                                                                   "summer", "autumn")))
+
+#pleiadesGH.v2.interp$season
+
+scaleY.T  <- scale_y_continuous(breaks = seq(0, maxT, 10))
+scaleX.T  <- scale_x_continuous(breaks = seq(0, 40, 3))
+
+df.texto <- data.frame(
+  x = c(35),
+  y = c(10)
+)
+
+pleiadesGH.v2.interp %>%
+  ggplot(aes(tempExt, tempInt,
+              size = as.numeric(riego),
+              color = radExt)) + 
+    geom_point(aes(size = as.numeric(riego),
+                   color = radExt))+
+  scale_colour_gradient(low = "blue", high = "red")+
+#  geom_density_2d(show.legend=F,
+#                  contour = T,
+#                  colour = "black") + 
+  geom_smooth(method='lm', se = F, color = "green", size = 1) + 
+  scale_size_continuous(name="Irrigation", breaks = c(0,1))+
+  scaleX.T+
+  scaleY.T+
+  coord_cartesian(xlim = c(0, 40),
+                  ylim = c(0, maxT)) +
+  facet_grid(rows = vars(season_f)) +
+  geom_text(aes(df.texto$x,df.texto$y,label=r), size = 3, color = "black")+
+  ggtitle(" Outdoor-indoor temperature correlations in the 4 seasons")+ theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom") +
+  labs(x = "External Temperature(ºC)", y = "Internal Temperature(ºC)")+
+  ggsave("tempIntExtFacet.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+  
+```
+
+
+
+##### Clustering
+```{r}
+pleiadesGH.v2.km<-clustering.kmeans(pleiadesGH.v2, 2, c("tempInt", "tempExt"))[[1]]
+
+ggplot(pleiadesGH.v2.km ) + 
+    geom_point(aes(tempInt, tempExt,
+                 shape = clusters,
+                 color = radExt)) +
+    scale_shape_manual(values = c(1, 13) )+
+    scale_colour_gradient(low = "blue", high = "red")+
+    
+    geom_vline(xintercept = 2, linetype="dashed", color = "blue")+
+    geom_vline(xintercept = 22, linetype="dashed", color = "blue")+
+    geom_vline(xintercept = 24, linetype="dashed", color = "red")+
+    geom_vline(xintercept = 39, linetype="dashed",color = "red")+
+    
+    geom_hline(yintercept=1.5, linetype="dashed", color = "blue")+
+    geom_hline(yintercept=24, linetype="dashed", color = "blue")+
+    geom_hline(yintercept=9, linetype="dashed", color = "red")+
+    geom_hline(yintercept=28, linetype="dashed", color = "red")+
+
+  
+    geom_density2d(data = pleiadesGH.v2.km[pleiadesGH.v2.km$clusters == 1 & 
+                                           pleiadesGH.v2.km$tempInt>2 &
+                                           pleiadesGH.v2.km$tempInt<22 &
+                                           pleiadesGH.v2.km$tempExt>1.5 &
+                                           pleiadesGH.v2.km$tempExt<24, ],
+                   aes(tempInt, tempExt),
+                   show.legend = F,
+                   contour = T,
+                   colour = "green") +
+  
+      geom_density2d(data = pleiadesGH.v2.km[pleiadesGH.v2.km$clusters == 2 &
+                                             pleiadesGH.v2.km$tempInt>24 &
+                                             pleiadesGH.v2.km$tempInt<39 &
+                                             pleiadesGH.v2.km$tempExt>9 &
+                                             pleiadesGH.v2.km$tempExt<28, ],
+                   aes(tempInt, tempExt),
+                   show.legend = F,
+                   contour = T,
+                   colour = "green") +
+  
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxT))+
+    ggtitle("TempInt-HumInt.E fitted by normals[process]")+
+    scaleX.T+
+    scaleY.T+
+    theme_bw()+
+    theme(legend.position="bottom",
+          plot.title = element_text(hjust = 0.5))
+ggsave("temperaturaInteriorExteriorEllipsesProc.jpeg", path = "./exportsPleiades")
+
+
+
+pleiadesGH.v2.interior.cold<-pleiadesGH.v2.km[pleiadesGH.v2.km$tempInt>2 &
+                                              pleiadesGH.v2.km$tempInt<22 &
+                                              pleiadesGH.v2.km$tempExt>1.5 &
+                                              pleiadesGH.v2.km$tempExt<24, ] 
+
+
+
+pleiadesGH.v2.interior.warm<- pleiadesGH.v2.km[pleiadesGH.v2.km$tempInt>24 &
+                                              pleiadesGH.v2.km$tempInt<39 &
+                                              pleiadesGH.v2.km$tempExt>9 &
+                                              pleiadesGH.v2.km$tempExt<28,]
+
+
+interior.cold.normal<-mvrnorm(n = nrow(pleiadesGH.v2.interior.cold),
+                  mu = apply(pleiadesGH.v2.interior.cold[,c("tempInt", "tempExt")],
+                             2, mean),
+                  Sigma = cov(pleiadesGH.v2.interior.cold[,c("tempInt", "tempExt")]))
+
+
+interior.warm.normal<-mvrnorm(n = nrow(pleiadesGH.v2.interior.warm),
+                  mu = apply(pleiadesGH.v2.interior.warm[,c("tempInt", "tempExt")],
+                             2, mean),
+                  Sigma = cov(pleiadesGH.v2.interior.warm[,c("tempInt", "tempExt")]))
+
+
+
+
+interior.warm.normal.pleiades <- as.data.frame(interior.warm.normal)
+interior.cold.normal.pleiades <- as.data.frame(interior.cold.normal)
+
+ggplotBivariateEllipses(interior.warm.normal.pleiades,
+                        interior.cold.normal.pleiades,
+                        scaleX.T, scaleY.T,
+                        0, maxT, 0, maxT,
+                        "Interior temperature (?C)",
+                        "Exterior temperature (?C)",
+                        "TempInt-HumInt.E fitted by normals")
+  ggsave("temperaturaInteriorExteriorEllipses.jpeg", path = "./exportsPleiades")
+
+
+
+
+```
+
+
+#### TempExt - TempMac
+
+```{r}
+  ggplot(pleiadesGH.v2.interp) + 
+    geom_point(aes(tempExt, tempMac,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(tempExt, tempMac),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+  
+#    stat_quantile(aes(tempExt, tempMac), formula=y ~ poly(x, 5),
+#                color = "green",size =1, quantiles = c(0.15,0.75)) +
+  
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    scaleX.T+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxT))+
+    ggtitle("Temperatura maceta/exterior")+ theme_gray() +
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom") +
+    labs(x ="Temperatura exterior(?C) ", y = "Temperatura maceta(?C) ")
+ggsave("temperaturaInteriorExterior.jpeg", path = "./exportsPleiades")
+
+```
+
+#### TempExt - HumIntR/E
+```{r}
+
+  ggplot(pleiadesGH.v2.interp) + 
+    geom_point(aes(tempExt, humInt.R,
+                   size = as.numeric(riego),
+                   color = radExt))+
+  
+    geom_density_2d(aes(tempExt, humInt.R),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    scale_colour_gradient(low = "blue", high = "red")+
+  
+    stat_quantile(aes(tempExt, humInt.R), formula=y ~ poly(x, 5),
+                color = "green",size =1, quantiles = c(0.25,0.75)) +
+    
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxHR))+
+    scaleX.T+
+    scaleY.HR+
+    ggtitle("humInt-tempExt-riego-radExt [GHv2]")+
+    theme_gray() +
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom")+
+    labs(x = "Exterior Temperature (?C)", y = "Relative Interior humidity (%)")
+#    ggsave("finalRe.jpeg", path = "./exportsPleiades")
+
+#-------------------------------------------------------------------------#
+
+        
+  ggplot(pleiadesGH.v2.interp) + 
+    geom_point(aes(tempExt, humInt.E,
+                   size = as.numeric(riego),
+                   color = radExt))+
+
+    geom_density_2d(aes(tempExt, humInt.E),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    scale_colour_gradient(low = "blue", high = "red")+
+  
+    coord_cartesian(xlim = c(0, maxT),
+                  ylim = c(0, maxHE))+
+    scaleX.T+
+    scaleY.HE+
+    ggtitle("humInt-tempExt-riego-radExt [GHv2]")+ theme_gray() +
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom")+
+    labs(x = "Exterior Temperature (?C)", y = "Humidity ratio (g/kg(d.a))")
+#      ggsave("finalEs.jpeg", path = "./exportsPleiades")
+
+```
+
+
+#### HumeExtR - TempInt por estaciones
+
+
+##### INVIERNO
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time< spring.init,c("humExt.R", "tempExt")] %>% cor #-0.51
+
+df.texto <- data.frame(
+  x = c(95),
+  y = c(48),
+  text = c("COR = -0.51")
+)
+  ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time< spring.init,]) + 
+    geom_point(aes(humExt.R, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(humExt.R, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(humExt.R, tempInt),method='lm', se = F, color = "green", size = 3)+
+  
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    scaleX.HR+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxHR),
+                    ylim = c(0, maxT))+
+    ggtitle("Humedad exterior - Temperatura interior INVIERNO")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="none") +
+    labs(x =element_blank(), y = "Temperatura Interior(?C) ")+
+    ggsave("tempIntHumExtRINV.jpeg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")  
+```  
+
+##### PRIMAVERA
+
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>spring.init &
+                      pleiadesGH.v2.interp$time<summer.init,c("humExt.R", "tempExt")] %>% cor # -0.41
+
+df.texto <- data.frame(
+  x = c(95),
+  y = c(48),
+  text = c("COR = -0.41")
+)
+
+  ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>spring.init &
+                              pleiadesGH.v2.interp$time<summer.init,]) + 
+    geom_point(aes(humExt.R, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(humExt.R, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(humExt.R, tempInt),method='lm', se = F, color = "green", size = 3)+
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    scaleX.HR+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxHR),
+                  ylim = c(0, maxT))+
+    ggtitle("Humedad exterior - Temperatura interior PRIMAVERA")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="none") +
+    labs(x =element_blank(), y = "Temperatura Interior(?C) ") +
+    ggsave("tempIntHumExtRPRI.jpeg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```  
+  
+  
+##### VERANO
+  
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>summer.init &
+                     pleiadesGH.v2.interp$time<autumn.init,c("humExt.R", "tempExt")] %>% cor # -0.85
+
+df.texto <- data.frame(
+  x = c(95),
+  y = c(48),
+  text = c("COR = -0.85")
+)
+
+  ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>summer.init &
+                              pleiadesGH.v2.interp$time<autumn.init,]) + 
+    geom_point(aes(humExt.R, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(humExt.R, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(humExt.R, tempInt),method='lm', se = F, color = "green", size = 3)+
+
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    scaleX.HR+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxHR),
+                  ylim = c(0, maxT))+
+    ggtitle("Humedad exterior - Temperatura interior VERANO")+ theme_bw() +
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="none") +
+    labs(x =element_blank(), y = "Temperatura Interior(?C) ")+
+    ggsave("tempIntHumExtRVER.jpeg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+##### OTO?O
+
+```{r}
+pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>autumn.init &
+                    pleiadesGH.v2.interp$time<winter.init,c("humExt.R", "tempExt")] %>% cor # -0.32
+
+df.texto <- data.frame(
+  x = c(95),
+  y = c(48),
+  text = c("COR = -0.32")
+)
+
+ggplot(pleiadesGH.v2.interp[pleiadesGH.v2.interp$time>autumn.init &
+                            pleiadesGH.v2.interp$time<finv,]) + 
+    geom_point(aes(humExt.R, tempInt,
+                   size = as.numeric(riego),
+                   color = radExt))+
+    scale_colour_gradient(low = "blue", high = "red")+
+
+    geom_density_2d(aes(humExt.R, tempInt),
+                    show.legend=F,
+                    contour = T,
+                    colour = "black")+ 
+    geom_smooth(aes(humExt.R, tempInt),method='lm', se = F, color = "green", size = 3)+
+
+    scale_size_continuous(name="Riego", breaks = c(0,1))+
+    scaleX.HR+
+    scaleY.T+
+    coord_cartesian(xlim = c(0, maxHR),
+                  ylim = c(0, maxT))+
+    ggtitle("Humedad exterior - Temperatura interior OTO?O")+ theme_bw() +
+    theme(plot.title = element_text(hjust = 0.5),
+        legend.position="none") +
+    labs(x ="Humedad exterior(%) ", y = "Temperatura Interior(?C) ")+
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+    ggsave("tempIntHumExtROTO.jpeg",
+         width = 12,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades") 
+```
+
+
+
+

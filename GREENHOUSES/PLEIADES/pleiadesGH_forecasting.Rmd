@@ -1,0 +1,1356 @@
+---
+title: "Forecasting Pleiades"
+author: "Jose Vicente Yago Martinez"
+date: "5/5/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(forecast)
+library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tidyverse)
+library(ForecastComb)
+library(imputeTS)
+library(reshape2)
+library(gridExtra)
+library(PerformanceAnalytics)
+
+source("../../GREENHOUSES/funciones/forecastingFuns.R")
+
+freq.daily <- 48
+route  = "./MODELS/"
+route_proc = "../../DATA/DATA_UMU/PROC/"
+ts.daily <- paste(route_proc, "ts.daily.rds", sep="") %>%  readRDS()
+ts.daily.broken <- paste(route_proc, "ts.daily.broken.rds", sep="") %>%  readRDS()
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+```
+
+```{r}
+autoplot(ts.daily[, "tempMac"],  series = "FIXED") + 
+autolayer(ts.daily.broken[, "tempMac"], series = "ORIGINAL") + 
+  ggtitle("Temperatura maceta 2018") + labs(x="time(days)", y="?C")
+
+autoplot(ts.daily[, "tempInt"],  series = "FIXED") + 
+autolayer(ts.daily.broken[, "tempInt"], series = "ORIGINAL") + 
+  ggtitle("Temperatura interior 2018") + labs(x="time(days)", y="?C")
+```
+
+# CONSTRUCCION DE CONJUNTOS
+En este apartado se va a construir una estructura de conjuntos de entramiento y test de forma que los cjtos de test 
+se puedan unificar formando la serie de tiempo original, completa, continua y aproximada por todos los modelos. De esta 
+forma podemos tener una idea muy realista de la precisi?n de todos los m?todos utilizados. A esta forma de dividir los cjtos 
+de training y test para crear este efecto y el proceso de validaci?n siguiente lo he llamado *validaci?n solapada*.
+
+
+Con `create_sequential_sets_df` el dataframe pleiadesGH.v2.interp en una lista de dataframes solapados. Cada uno de los dataframes
+de la lista se tranforma en una lista de series de tiempo de longitud variable, en funci?n de `optimunTL` que contiene el cjto de 
+entramiento ?ptimo para cada modelo, este proceso se lleva a cabo en la funci?n `create_custom_sets`.
+
+# PARTE I: FORECAST NO INFORMADO
+
+```{r}
+h = 7 # Forecast horizont
+optimunTL <- paste(route, "optimunTL.rds", sep="") %>%  readRDS()
+k = max(unlist(optimunTL)) + h # N? dias para el modelo con el trainig set m?s largo.
+gap = h # Salto de conjunto a conjunto, grad o de solapamiento
+freq = 48 # Frecuencia de la serie de tiempo
+pred = "tempInt" # predictor
+route = "./MODELS/"
+k
+```
+
+```{r}
+dfs_seq <- create_sequential_sets_df(k = k*freq,
+                                    gap = gap*freq,
+                                    df = pleiadesGH.v2.interp)
+
+sets <- create_custom_sets(dfs = dfs_seq,
+                           fun = sets_creator,
+                           optTL = optimunTL,
+                           freq = freq,
+                           h = h,
+                           gap = gap,
+                           start = 1)
+
+saveRDS(sets, paste(route, "sets.rds", sep=""))
+```
+
+Se va a simular el caso  en el que no se tiene ninguna informaci?n sobre el exterior, unicamente se tiene el 
+hist?rico de la variable que se quiere predecir.
+
+## Temperatura interior
+```{r}
+if(F){
+trainedModelsList <- train_models_list(fun = train_models,
+                                       setsList = sets,
+                                       pred = pred)
+saveRDS(trainedModelsList, paste(route, "trainedModelsList.rds", sep=""))
+
+forecastsLists <- get_forecasts_list(fun = get_forecasts,
+                                     trainedModelsLists = trainedModelsList,
+                                     sets = sets,
+                                     h = h,
+                                     freq = freq)
+saveRDS(forecastsLists, paste(route, "forecastsLists.rds", sep=""))
+}
+```
+
+Carga directa de los modelos y sus predicciones.
+```{r}
+trainedModelsList <- paste(route, "trainedModelsList.rds", sep="") %>%  readRDS()
+forecastsLists    <- paste(route, "forecastsLists.rds", sep="") %>%  readRDS()
+```
+
+
+C?lculo de los intervalos MAX-MIN a trav?s de `get_intervals_list` y de los distintos accuracies a traves de `get_accs_list`
+```{r}
+intervalsLists <- get_intervals_list(fun = get_intervals, 
+                                     intervalLists = forecastsLists)
+
+accsList  <- get_accs_list(fun = get_accs,
+                           fcasts = forecastsLists,
+                           sets = sets,
+                           predictor = pred,
+                           models = trainedModelsList)
+
+```
+
+
+Unificaci?n de cada uno de los test sets individuales de todos los modelos.
+```{r}
+f <- get_sequential_forecasts(fcastLists = forecastsLists,
+                              sets = sets,
+                              pred = pred)
+if(F){
+saveRDS(f, paste(route_proc, "f.rds", sep=""))
+}
+
+fi <- get_sequential_intervals(intervLists = intervalsLists,
+                              sets = sets,
+                              pred   = pred)
+```
+
+```{r}
+library(forecast)
+start = f %>%  start
+end = f %>% end
+
+f %>% window(start = start,
+             end = end) -> g
+
+autoplot(g[,"PROPHET"], series = "PROPHET")+
+  autolayer(g[,"SNAIVE"], series = "SNAIVE") +
+  autolayer(g[,"ARIMA"], series = "ARIMA") +
+  autolayer(g[,"TBATS"], series = "TBATS") +
+  autolayer(g[,"NNETAR"], series = "NNETAR") +
+  autolayer(g[,"MEAN"], series = "MEAN") +
+  autolayer(g[,"REAL"], series = "REAL",  color = "black", alpha = 1) +
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggtitle("Temperatura interior predicha para todos los modelos [escenario no informado]")
+  ggsave("resultadoNoInformado.jpeg",
+         width = 14,
+         dpi = "retina",
+         height = 6,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+start = f %>%  start
+end = 200
+
+f %>% window(start = start,
+             end = end) -> g
+
+autoplot(g[,"PROPHET"], series = "PROPHET")+
+  autolayer(g[,"SNAIVE"], series = "SNAIVE") +
+  autolayer(g[,"ARIMA"], series = "ARIMA") +
+  autolayer(g[,"TBATS"], series = "TBATS") +
+  autolayer(g[,"NNETAR"], series = "NNETAR") +
+  autolayer(g[,"MEAN"], series = "MEAN") +
+  autolayer(g[,"REAL"], series = "REAL",  color = "black", alpha = 0.5) +
+  theme_bw()+
+  theme(legend.position = "bottom", ) +
+  labs(x = element_blank(), y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Interior temperature forecast for all models")
+  ggsave("resultadoNoInformado1.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+start = 200
+end = 250
+
+f %>% window(start = start,
+             end = end) -> g
+
+autoplot(g[,"PROPHET"], series = "PROPHET")+
+  autolayer(g[,"SNAIVE"], series = "SNAIVE") +
+  autolayer(g[,"ARIMA"], series = "ARIMA") +
+  autolayer(g[,"TBATS"], series = "TBATS") +
+  autolayer(g[,"NNETAR"], series = "NNETAR") +
+  autolayer(g[,"MEAN"], series = "MEAN") +
+  autolayer(g[,"REAL"], series = "REAL",  color = "black", alpha = 0.5) +
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(x = element_blank() , y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Interior temperature forecast for all models")
+  ggsave("resultadoNoInformado2.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+start = 250
+end = 300
+
+f %>% window(start = start,
+             end = end) -> g
+
+autoplot(g[,"PROPHET"], series = "PROPHET")+
+  autolayer(g[,"SNAIVE"], series = "SNAIVE") +
+  autolayer(g[,"ARIMA"], series = "ARIMA") +
+  autolayer(g[,"TBATS"], series = "TBATS") +
+  autolayer(g[,"NNETAR"], series = "NNETAR") +
+  autolayer(g[,"MEAN"], series = "MEAN") +
+  autolayer(g[,"REAL"], series = "REAL",  color = "black", alpha = 0.5) +
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(x = element_blank() , y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Interior temperature forecast for all models")
+  ggsave("resultadoNoInformado3.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+start = 300
+
+f %>% window(start = start) -> g
+
+autoplot(g[,"PROPHET"], series = "PROPHET")+
+  autolayer(g[,"SNAIVE"], series = "SNAIVE") +
+  autolayer(g[,"ARIMA"], series = "ARIMA") +
+  autolayer(g[,"TBATS"], series = "TBATS") +
+  autolayer(g[,"NNETAR"], series = "NNETAR") +
+  autolayer(g[,"MEAN"], series = "MEAN") +
+  autolayer(g[,"REAL"], series = "REAL",  color = "black", alpha = 0.5) +
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Interior temperature forecast for all models")
+  ggsave("resultadoNoInformado4.jpeg",
+         width = 10,
+         dpi = "retina",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+i <- 25
+
+autoplot(sets[[i]]$TEST[,pred]) +
+  autolayer(forecastsLists[[i]]$SNAIVE.fcast$mean, series = "SNAIVE") +
+  autolayer(forecastsLists[[i]]$ARIMA.fcast$mean, series = "ARIMA") +
+  autolayer(forecastsLists[[i]]$NNETAR.fcast$mean, series = "NNETAR") +
+  autolayer(forecastsLists[[i]]$TBATS$mean, series = "TBATS") +
+  autolayer(forecastsLists[[i]]$PROPHET.fcast, series = "PROPHET") +
+  autolayer(forecastsLists[[i]]$MEAN.fcast, series = "MEAN") +
+  labs(y = "?C", color = element_blank())+
+  theme_bw()+
+  theme(legend.position="none")+
+#  theme(legend.position="none",
+#        axis.title.x=element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Interior temperature forecast for all models [not informed]")+
+  ggsave("ejemploNoInformado25.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+# PARTE II: FORECAST INFORMADO
+
+En este apartado se simula el caso en el que se tiene una informaci?n *perfecta* del futuro de las variables del exterior del invernadero, tomaremos como variables ex?genas o externas, la temperatura exterior, la radiaci?n solar y la humedad exterior relativa.
+Estas variables han sido seleccionadas en funcion del correlograma calculado en el fichero `pleiades_GH_vis`. Este en un caso ideal pues para conseguir esa informaci?n, tendriamos 2 formas, o bien predicid?ndola nosotros mismas o bien a trav?s de una servicio de 
+predicci?n fiables, en ambos casos la calidad de la predicci?n nunca ser?a tan perfecta como la aqu? utilizada.
+
+```{r}
+h = 7 # Forecast horizont
+optimunTL.exog <- paste(route, "optimunTL.exog.rds", sep="") %>%  readRDS()
+
+k.exog = max(unlist(optimunTL.exog)) + h # N? dias para el modelo con el trainig set m?s largo.
+gap = h # Salto de conjunto a conjunto, grado de solapamiento
+freq = 48 # Frecuencia de la serie de tiempo
+pred = "tempInt" # predictor
+exog_vars = c("tempExt", "radExt", "humExt.R")
+route = "./MODELS/"
+k.exog
+```
+
+```{r}
+dfs_seq.exog <- create_sequential_sets_df(k = k.exog*freq,
+                                    gap = gap*freq,
+                                    df = pleiadesGH.v2.interp)
+
+sets.exog <- create_custom_sets(dfs = dfs_seq.exog,
+                           fun = sets_creator,
+                           optTL = optimunTL.exog,
+                           freq = freq,
+                           h = h,
+                           gap = gap,
+                           start = 1)
+```
+
+```{r}
+autoplot(sets.exog$`1`$TRAIN[,pred],color = "black") +
+  autolayer(sets.exog$`1`$TEST[,pred],series = '1') +
+  autolayer(sets.exog$`2`$TEST[,pred], series = '2') +
+  autolayer(sets.exog$`2`$TEST[,pred], series = '2') +
+  autolayer(sets.exog$`3`$TEST[,pred], series = '3') +
+  autolayer(sets.exog$`4`$TEST[,pred], series = '4') +
+  autolayer(sets.exog$`5`$TEST[,pred], series = '5') +
+  autolayer(sets.exog$`6`$TEST[,pred], series = '6') + 
+  autolayer(sets.exog$`7`$TEST[,pred], series = '7') +
+  autolayer(sets.exog$`8`$TEST[,pred], series = '8') +
+  autolayer(sets.exog$`9`$TEST[,pred], series = '9') +
+  autolayer(sets.exog$`10`$TEST[,pred], series = '10') +
+  autolayer(sets.exog$`11`$TEST[,pred], series = '11') + 
+  autolayer(sets.exog$`12`$TEST[,pred], series = '12') +
+  autolayer(sets.exog$`13`$TEST[,pred], series = '13') +
+  autolayer(sets.exog$`14`$TEST[,pred], series = '14') +
+  autolayer(sets.exog$`15`$TEST[,pred], series = '15') +
+  autolayer(sets.exog$`16`$TEST[,pred], series = '16') +
+  autolayer(sets.exog$`17`$TEST[,pred], series = '17') +
+  autolayer(sets.exog$`18`$TEST[,pred], series = '18') +
+  autolayer(sets.exog$`19`$TEST[,pred], series = '19') +
+  autolayer(sets.exog$`20`$TEST[,pred], series = '20') + 
+  autolayer(sets.exog$`21`$TEST[,pred], series = '21') +
+  autolayer(sets.exog$`22`$TEST[,pred], series = '22') +
+  autolayer(sets.exog$`23`$TEST[,pred], series = '23') +
+  autolayer(sets.exog$`24`$TEST[,pred], series = '24') +
+  autolayer(sets.exog$`25`$TEST[,pred], series = '25') + 
+  autolayer(sets.exog$`26`$TEST[,pred], series = '26') +
+  autolayer(sets.exog$`27`$TEST[,pred], series = '27') +
+  autolayer(sets.exog$`28`$TEST[,pred], series = '28') +
+  autolayer(sets.exog$`29`$TEST[,pred], series = '29') +
+  autolayer(sets.exog$`30`$TEST[,pred], series = '30') +
+  scale_color_discrete(breaks = sort(seq(1,30,1)))+
+  theme_bw()+
+  guides(col = guide_legend(nrow = 3))+
+  labs(color = element_blank())+
+  theme(legend.position="bottom"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  ggtitle("Conjuntos de test evaluados") + ylab("?C")
+  ggsave("testsSeq.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+
+```
+
+```{r}
+autoplot(sets.exog$`1`$TEST[,pred]  %>% ts(frequency =48), series = '1')+
+  autolayer(sets.exog$`2`$TEST[,pred] %>% ts(frequency =48), series = '2') +
+  autolayer(sets.exog$`3`$TEST[,pred] %>% ts(frequency =48), series = '3') +
+  autolayer(sets.exog$`4`$TEST[,pred] %>% ts(frequency =48), series = '4') +
+  autolayer(sets.exog$`5`$TEST[,pred] %>% ts(frequency =48), series = '5') +
+  autolayer(sets.exog$`6`$TEST[,pred] %>% ts(frequency =48), series = '6') + 
+  autolayer(sets.exog$`7`$TEST[,pred] %>% ts(frequency =48), series = '7') +
+  autolayer(sets.exog$`8`$TEST[,pred] %>% ts(frequency =48), series = '8') +
+  autolayer(sets.exog$`9`$TEST[,pred] %>% ts(frequency =48), series = '9') +
+  autolayer(sets.exog$`10`$TEST[,pred] %>% ts(frequency =48), series = '10') +
+  autolayer(sets.exog$`11`$TEST[,pred] %>% ts(frequency =48), series = '11') + 
+  autolayer(sets.exog$`12`$TEST[,pred] %>% ts(frequency =48), series = '12') +
+  autolayer(sets.exog$`13`$TEST[,pred] %>% ts(frequency =48), series = '13') +
+  autolayer(sets.exog$`14`$TEST[,pred] %>% ts(frequency =48), series = '14') +
+  autolayer(sets.exog$`15`$TEST[,pred] %>% ts(frequency =48), series = '15') +
+  autolayer(sets.exog$`16`$TEST[,pred] %>% ts(frequency =48), series = '16') +
+  autolayer(sets.exog$`17`$TEST[,pred] %>% ts(frequency =48), series = '17') +
+  autolayer(sets.exog$`18`$TEST[,pred] %>% ts(frequency =48), series = '18') +
+  autolayer(sets.exog$`19`$TEST[,pred] %>% ts(frequency =48), series = '19') +
+  autolayer(sets.exog$`20`$TEST[,pred] %>% ts(frequency =48), series = '20') + 
+  autolayer(sets.exog$`21`$TEST[,pred] %>% ts(frequency =48), series = '21') +
+  autolayer(sets.exog$`22`$TEST[,pred] %>% ts(frequency =48), series = '22') +
+  autolayer(sets.exog$`23`$TEST[,pred] %>% ts(frequency =48), series = '23') +
+  autolayer(sets.exog$`24`$TEST[,pred] %>% ts(frequency =48), series = '24') +
+  autolayer(sets.exog$`25`$TEST[,pred] %>% ts(frequency =48), series = '25') + 
+  autolayer(sets.exog$`26`$TEST[,pred] %>% ts(frequency =48), series = '26') +
+  autolayer(sets.exog$`27`$TEST[,pred] %>% ts(frequency =48), series = '27') +
+  autolayer(sets.exog$`28`$TEST[,pred] %>% ts(frequency =48), series = '28') +
+  autolayer(sets.exog$`29`$TEST[,pred] %>% ts(frequency =48), series = '29') +
+  autolayer(sets.exog$`30`$TEST[,pred] %>% ts(frequency =48), series = '30') +
+  scale_color_discrete(breaks = sort(seq(1,30,1)))+
+  theme_bw() +
+  theme(legend.position="bottom")+
+  guides(col = guide_legend(nrow = 3))+
+  ggtitle("Conjuntos de test evaluados") + labs(y = "?C", color = element_blank()) +
+  ggsave("testsAlineados.jpeg",
+         width = 10,
+         dpi = 250,
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+
+
+```{r}
+if(F){
+trainedModelsListExog <- train_models_list(fun = train_models_exogenous,
+                                           setsList = sets.exog,
+                                           pred = pred,
+                                           freq = freq,
+                                           h = h,
+                                           exog_vars)
+saveRDS(trainedModelsListExog, paste(route, "trainedModelsListExog.rds", sep=""))
+forecastsListsExog <- get_forecasts_list(fun = get_forecasts_exogenous,
+                                         trainedModelsLists = trainedModelsListExog,
+                                         setsLists = sets.exog,
+                                         h = h,
+                                         freq = freq,
+                                         exog_vars)
+saveRDS(forecastsListsExog, paste(route, "forecastsListsExog.rds", sep=""))
+}
+
+```
+
+
+Carga directa de los modelos y sus predicciones.
+```{r}
+trainedModelsListExog <- paste(route, "trainedModelsListExog.rds", sep="") %>%  readRDS()
+forecastsListsExog    <- paste(route, "forecastsListsExog.rds", sep="") %>%  readRDS()
+```
+
+```{r}
+accsListExog  <- get_accs_list(fun = get_accsExog,
+                              fcasts = forecastsListsExog,
+                              sets = sets.exog,
+                              predictor = pred,
+                              models = trainedModelsListExog)
+
+intervalsListsExog <- get_intervals_list(fun = get_intervals, 
+                                         intervalLists = forecastsListsExog)
+```
+
+```{r}
+fx <- get_sequential_forecasts(fcastLists = forecastsListsExog,
+                               sets = sets.exog,
+                               pred = pred)
+
+if(F){
+saveRDS(fx, paste(route_proc, "fx.rds", sep=""))
+}
+
+
+fix <- get_sequential_intervals(intervLists = intervalsListsExog,
+                                sets = sets.exog,
+                                pred   = pred)
+```
+
+```{r}
+alpha = 0.7
+start = fx %>% start
+end = fx %>% end
+fx %>% window(start = start,
+             end = end) -> gx
+
+autoplot(gx[,"PROPHET"], series = "PROHET") +
+  autolayer(gx[,"ARIMA"], series = "ARIMA") +
+  autolayer(gx[,"NNETAR"], series = "NNETAR") +
+  autolayer(gx[,"MEAN"], series = "MEAN") +
+  autolayer(gx[,"REAL"], series = "REAL",  color = "black", alpha = alpha) +
+  xlab("time(n?day) ") + ylab("?C") +
+  ggtitle("Temperatura interior predicha para todos los modelos [escenario informado]")+
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(x = element_blank() , y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggsave("resultadoInformado.jpeg",
+         width = 8,
+         dpi = "print",
+         height = 5,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+alpha = 0.5
+start = fx %>% start
+end = 200
+fx %>% window(start = start,
+             end = end) -> gx
+
+autoplot(gx[,"PROPHET"], series = "PROHET") +
+  autolayer(gx[,"ARIMA"], series = "ARIMA") +
+  autolayer(gx[,"NNETAR"], series = "NNETAR") +
+  autolayer(gx[,"MEAN"], series = "MEAN") +
+  autolayer(gx[,"REAL"], series = "REAL",  color = "black", alpha = alpha) +
+  xlab("time(n?day) ") + ylab("?C") +
+#  ggtitle("Interior temperature forecast for all models") + 
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(x = element_blank() , y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggsave("resultadoInformado1.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+#----------------------------------------------------#
+
+start = 200
+end =  250
+fx %>% window(start = start,
+             end = end) -> gx
+
+autoplot(gx[,"PROPHET"], series = "PROHET") +
+  autolayer(gx[,"ARIMA"], series = "ARIMA") +
+  autolayer(gx[,"NNETAR"], series = "NNETAR") +
+  autolayer(gx[,"MEAN"], series = "MEAN") +
+  autolayer(gx[,"REAL"], series = "REAL",  color = "black", alpha = alpha) +
+  xlab("time(n?day) ") + ylab("?C") +
+#  ggtitle("Interior temperature forecast for all models") + 
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(x = element_blank() , y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Tempeatura interior predecida para todos los modelos [escenario informado]")
+  ggsave("resultadoInformado2.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+#----------------------------------------------------#
+start = 250
+end =  300
+fx %>% window(start = start,
+             end = end) -> gx
+
+autoplot(gx[,"PROPHET"], series = "PROHET") +
+  autolayer(gx[,"ARIMA"], series = "ARIMA") +
+  autolayer(gx[,"NNETAR"], series = "NNETAR") +
+  autolayer(gx[,"MEAN"], series = "MEAN") +
+  autolayer(gx[,"REAL"], series = "REAL",  color = "black", alpha = alpha) +
+  xlab("time(n?day) ") + ylab("?C") +
+#  ggtitle("Interior temperature forecast for all models") + 
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(x = element_blank() , y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggsave("resultadoInformado3.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+#----------------------------------------------------#
+start = 300
+end =  fx %>% end
+fx %>% window(start = start,
+             end = end) -> gx
+
+autoplot(gx[,"PROPHET"], series = "PROHET") +
+  autolayer(gx[,"ARIMA"], series = "ARIMA") +
+  autolayer(gx[,"NNETAR"], series = "NNETAR") +
+  autolayer(gx[,"MEAN"], series = "MEAN") +
+  autolayer(gx[,"REAL"], series = "REAL",  color = "black", alpha = alpha) +
+  ylab("?C") +
+#  ggtitle("Interior temperature forecast for all models") + 
+  theme_bw()+
+  theme(legend.position = "bottom") +
+  labs(y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggsave("resultadoInformado4.jpeg",
+         width = 10,
+         dpi = "retina",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+# if(F){
+# models.spr <- train_models(spring.sets$TRAIN,
+#                            spring.sets$TRAIN.RNN,
+#                            spring.sets$TRAIN.PROPHET, "tempMac")
+# saveRDS(models.spr, paste(route, "models.spr.rds", sep=""))
+# fcasts.spr <- get_forecasts(models.spr, 48*7)
+# saveRDS(fcasts.spr, paste(route, "fcasts.spr.rds", sep=""))
+# }
+# 
+# accs.spr<-get_accs(fcasts.spr, spring.sets$TEST, "tempMac", models.spr)
+# forec.res.spr<-ggdisplay_forecasts(spring.sets$TEST, fcasts.spr, "tempMac", "Spring 2018")
+# best.info.spr<-ggtsdisplay_best(accs.spr, fcasts.spr, spring.sets$TRAIN, spring.sets$TEST, "tempMac")
+# 
+# forec.res.spr$FORECASTS
+# forec.res.spr$INTERVALS
+# accs.spr
+# best.info.spr$BEST
+# best.info.spr$RESIDERROR()
+# best.info.spr$HISTO()
+# best.info.spr$ACF()
+# best.info.spr$QQ()
+# best.info.spr$CORR_RES()
+# best.info.spr$CORR_ERR()
+```
+
+
+```{r}
+i <- 25
+
+autoplot(sets.exog[[i]]$TEST[,pred]) +
+  autolayer(forecastsListsExog[[i]]$SNAIVE.fcast$mean, series = "SNAIVE") +
+  autolayer(forecastsListsExog[[i]]$ARIMA.fcast$mean, series = "ARIMA") +
+  autolayer(forecastsListsExog[[i]]$NNETAR.fcast$mean, series = "NNETAR") +
+  autolayer(forecastsListsExog[[i]]$MEAN.fcast, series = "MEAN") +
+  labs(y = "?C", color = element_blank())+
+  theme_bw()+
+  theme(legend.position="bottom")+
+#  theme(legend.position="none",
+#        axis.title.x=element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+#  ggtitle("Interior temperature forecast for all models [informed]")+
+  ggsave("ejemploInformado25.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+
+
+# CALCULO RESULTADOS VALIDACI?N SOLAPADA
+## NO INF
+
+```{r}
+#SNAIVE
+accsList[[1]][1,c("RMSE", "MAPE", "MAE", "CC")] -> snaive.results
+accsList.2 <- accsList %>% tail(accsList %>% length - 1) 
+for(acc in accsList.2){
+  snaive.results<-rbind(snaive.results, acc[1,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+snaive.results$TEST <- seq(1,nrow(snaive.results), 1)
+
+#ARIMA
+accsList[[1]][2,c("RMSE", "MAPE", "MAE", "CC")] -> arima.results
+accsList.2 <- accsList %>% tail(accsList %>% length - 1) 
+for(acc in accsList.2){
+  arima.results<-rbind(arima.results, acc[2,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+arima.results$TEST <- seq(1,nrow(arima.results), 1)
+
+#NNETAR
+accsList[[1]][3,c("RMSE", "MAPE", "MAE", "CC")] -> nnetar.results
+accsList.2 <- accsList %>% tail(accsList %>% length - 1) 
+for(acc in accsList.2){
+  nnetar.results<-rbind(nnetar.results, acc[3,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+nnetar.results$TEST <- seq(1,nrow(nnetar.results), 1)
+
+#TBATS
+accsList[[1]][4,c("RMSE", "MAPE", "MAE", "CC")] -> tbats.results
+accsList.2 <- accsList %>% tail(accsList %>% length - 1) 
+for(acc in accsList.2){
+  tbats.results<-rbind(tbats.results, acc[4,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+tbats.results$TEST <- seq(1,nrow(tbats.results), 1)
+
+#PROPHET
+accsList[[1]][5,c("RMSE", "MAPE", "MAE", "CC")] -> prophet.results
+accsList.2 <- accsList %>% tail(accsList %>% length - 1) 
+for(acc in accsList.2){
+  prophet.results<-rbind(prophet.results, acc[5,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+prophet.results$TEST <- seq(1,nrow(prophet.results), 1)
+
+#MEAN
+accsList[[1]][6,c("RMSE", "MAPE", "MAE", "CC")] -> mean.results
+accsList.2 <- accsList %>% tail(accsList %>% length - 1) 
+for(acc in accsList.2){
+  mean.results<-rbind(mean.results, acc[6,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+mean.results$TEST <- seq(1,nrow(mean.results), 1)
+
+tbats.results$CC %>% mean
+```
+
+```{r}
+arima.results$MAE %>% mean
+nnetar.results$MAE %>% mean
+prophet.results$MAE %>% mean
+tbats.results$MAE %>% mean
+snaive.results$MAE %>% mean
+mean.results$MAE %>% mean
+```
+
+```{r}
+arima.results$MAE %>% sd
+nnetar.results$MAE %>% sd
+prophet.results$MAE %>% sd
+tbats.results$MAE %>% sd
+snaive.results$MAE %>% sd
+mean.results$MAE %>% sd
+```
+
+## INF
+
+```{r}
+#SNAIVE
+accsListExog[[1]][1,c("RMSE", "MAPE", "MAE", "CC")] -> snaivex.results
+accsListExog.2 <- accsListExog %>% tail(accsListExog %>% length - 1) 
+for(acc in accsListExog.2){
+  snaivex.results<-rbind(snaivex.results, acc[1,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+snaivex.results$TEST <- seq(1,nrow(snaivex.results), 1)
+
+#ARIMA
+accsListExog[[1]][2,c("RMSE", "MAPE", "MAE", "CC")] -> arimax.results
+for(acc in accsListExog.2){
+  arimax.results<-rbind(arimax.results, acc[2,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+arimax.results$TEST <- seq(1,nrow(arimax.results), 1)
+
+#NNETAR
+accsListExog[[1]][3,c("RMSE", "MAPE", "MAE", "CC")] -> nnetarx.results
+for(acc in accsListExog.2){
+  nnetarx.results<-rbind(nnetarx.results, acc[3,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+nnetarx.results$TEST <- seq(1,nrow(nnetarx.results), 1)
+
+#PROPHET
+accsListExog[[1]][4,c("RMSE", "MAPE", "MAE", "CC")] -> prophetx.results
+for(acc in accsListExog.2){
+  prophetx.results<-rbind(prophetx.results, acc[4,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+prophetx.results$TEST <- seq(1,nrow(prophetx.results), 1)
+
+#MEAN
+accsListExog[[1]][5,c("RMSE", "MAPE", "MAE", "CC")] -> meanx.results
+for(acc in accsListExog.2){
+  meanx.results<-rbind(meanx.results, acc[5,c("RMSE", "MAPE", "MAE", "CC")] )
+}
+meanx.results$TEST <- seq(1,nrow(meanx.results), 1)
+```
+
+```{r}
+snaivex.results$MAE %>% mean
+arimax.results$MAE %>% mean
+nnetarx.results$MAE %>% mean
+prophetx.results$MAE %>% mean
+meanx.results$MAE %>% mean
+```
+
+```{r}
+snaivex.results$MAE %>% sd
+arimax.results$MAE %>% sd
+nnetarx.results$MAE %>% sd
+prophetx.results$MAE %>% sd
+meanx.results$MAE %>% sd
+```
+
+# POINT RMSE MAPE
+
+```{r}
+ggplot(snaive.results,aes( x = TEST)) + 
+  geom_line(aes(y = snaive.results$RMSE, color = "SNAIVE")) +
+  geom_point(aes(y = snaive.results$RMSE, color = "SNAIVE")) +
+  geom_line(aes(y = arima.results$RMSE,  color = "ARIMA")) +
+  geom_point(aes(y = arima.results$RMSE,  color = "ARIMA")) +
+  geom_line(aes(y = nnetar.results$RMSE,  color = "NNETAR")) + 
+  geom_point(aes(y = nnetar.results$RMSE,  color = "NNETAR")) +
+  geom_line(aes(y = tbats.results$RMSE,  color = "TBATS")) + 
+  geom_point(aes(y = tbats.results$RMSE,  color = "TBATS")) + 
+  geom_line(aes(y = prophet.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(y = prophet.results$RMSE, color = "PROPHET")) +
+  geom_line(aes(y = mean.results$RMSE, color = "MEAN")) +
+  geom_point(aes(y = mean.results$RMSE, color = "MEAN")) +
+  scale_x_continuous(breaks = seq(0, 28, 5))+
+  theme_bw() +
+  theme(legend.position="bottom"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  labs(x = "TEST SETS", y = "?C", color = element_blank())+
+  guides(col = guide_legend(nrow = 1))+
+  ggtitle("RMSE semanal [Escenario No informado]") +
+  ggsave("resultadoNoInformadoRMSE.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+ggplot(snaive.results,aes( x = TEST)) + 
+  geom_line(aes(y = snaive.results$MAPE, color = "SNAIVE")) +
+  geom_point(aes(y = snaive.results$MAPE, color = "SNAIVE")) +
+  geom_line(aes(y = arima.results$MAPE,  color = "ARIMA")) +
+  geom_point(aes(y = arima.results$MAPE,  color = "ARIMA")) +
+  geom_line(aes(y = nnetar.results$MAPE,  color = "NNETAR")) + 
+  geom_point(aes(y = nnetar.results$MAPE,  color = "NNETAR")) +
+  geom_line(aes(y = tbats.results$MAPE,  color = "TBATS")) + 
+  geom_point(aes(y = tbats.results$MAPE,  color = "TBATS")) + 
+  geom_line(aes(y = prophet.results$MAPE, color = "PROPHET")) +
+  geom_point(aes(y = prophet.results$MAPE, color = "PROPHET")) +
+  geom_line(aes(y = mean.results$MAPE, color = "MEAN")) +
+  geom_point(aes(y = mean.results$MAPE, color = "MEAN")) +
+  scale_x_continuous(breaks = seq(0, 28, 5))+
+  theme_bw() +
+  theme(legend.position = "bottom")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "TEST SETS", y = "%", color = element_blank())+
+  ggtitle("MAPE semanal [Escenario No informado]")+
+  ggsave("resultadoNoInformadoMAPE.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+```
+
+
+
+
+```{r}
+ggplot(snaivex.results,aes( x = TEST)) + 
+  geom_line(aes(y = snaivex.results$RMSE, color = "SNAIVE")) +
+  geom_point(aes(y = snaivex.results$RMSE, color = "SNAIVE")) +
+  geom_line(aes(y = arimax.results$RMSE,  color = "ARIMA")) +
+  geom_point(aes(y = arimax.results$RMSE,  color = "ARIMA")) +
+  geom_line(aes(y = nnetarx.results$RMSE,  color = "NNETAR")) + 
+  geom_point(aes(y = nnetarx.results$RMSE,  color = "NNETAR")) +
+  geom_line(aes(y = prophetx.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(y = prophetx.results$RMSE, color = "PROPHET")) +
+  geom_line(aes(y = meanx.results$RMSE, color = "COMB")) +
+  geom_point(aes(y = meanx.results$RMSE, color = "COMB")) +
+  scale_x_continuous(breaks = seq(0, 30, 5))+
+  theme_bw() +
+  theme(legend.position="bottom"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  labs(x = "TEST SETS", y = "?C", color = element_blank())+
+  ggtitle("RMSE semanal [Escenario informado]") +
+  ggsave("resultadoInformadoRMSE.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+
+ggplot(snaivex.results,aes( x = TEST)) + 
+  geom_line(aes(y = snaivex.results$MAPE, color = "SNAIVE")) +
+  geom_point(aes(y = snaivex.results$MAPE, color = "SNAIVE")) +
+  geom_line(aes(y = arimax.results$MAPE,  color = "ARIMA")) +
+  geom_point(aes(y = arimax.results$MAPE,  color = "ARIMA")) +
+  geom_line(aes(y = nnetarx.results$MAPE,  color = "NNETAR")) + 
+  geom_point(aes(y = nnetarx.results$MAPE,  color = "NNETAR")) +
+  geom_line(aes(y = prophetx.results$MAPE, color = "PROPHET")) +
+  geom_point(aes(y = prophetx.results$MAPE, color = "PROPHET")) +
+  geom_line(aes(y = meanx.results$MAPE, color = "COMB")) +
+  geom_point(aes(y = meanx.results$MAPE, color = "COMB")) +
+  scale_x_continuous(breaks = seq(0, 30, 5))+
+  theme_bw() +
+  theme(legend.position = "bottom")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "TEST SETS", y = "%", color = element_blank())+
+  ggtitle("MAPE semanal [Escenario informado]")+
+  ggsave("resultadoInformadoMAPE.jpeg",
+         width = 10,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+#BOXPLOTS
+
+```{r}
+ggplot() + 
+  geom_boxplot(aes(x = "SNAIVE", snaive.results$RMSE, color = "SNAIVE"))+
+  geom_jitter(aes(x = "SNAIVE", snaive.results$RMSE, color = "SNAIVE", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "ARIMA", arima.results$RMSE, color = "ARIMA")) + 
+  geom_jitter(aes(x = "ARIMA",  arima.results$RMSE, color = "ARIMA", alpha = 0.1), width= 0.1)+
+  geom_boxplot(aes(x = "NNETAR", nnetar.results$RMSE, color = "NNETAR")) +
+  geom_jitter(aes(x = "NNETAR",  nnetar.results$RMSE, color = "NNETAR", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "PROPHET", prophet.results$RMSE, color = "PROPHET")) +
+  geom_jitter(aes(x = "PROPHET", prophet.results$RMSE, color = "PROPHET", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "TBATS", tbats.results$RMSE, color = "TBATS")) + 
+  geom_jitter(aes(x = "TBATS", tbats.results$RMSE, color = "TBATS", alpha = 0.1), width= 0.1) + 
+  geom_boxplot(aes(x = "MEAN", mean.results$RMSE, color = "MEAN")) +
+  geom_jitter(aes(x = "MEAN", mean.results$RMSE, color = "MEAN", alpha = 0.1), width= 0.1) +
+  theme_bw()+
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+      #  axis.title.y = element_text(size=25),
+      #  axis.text = element_text(size=16)
+        )+
+  labs(x = "MODELS", y = "ºC")+
+  scale_y_continuous(breaks = seq(0, 20, 5))+
+  ggtitle("RMSE for 30 test sets") +
+  ggsave("resultadoNoInformadoRMSEBoxPlot.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+
+
+ggplot() + 
+  geom_boxplot(aes(x = "SNAIVE", snaive.results$MAPE, color = "SNAIVE"))+
+  geom_jitter(aes(x = "SNAIVE", snaive.results$MAPE, color = "SNAIVE", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "ARIMA", arima.results$MAPE, color = "ARIMA")) + 
+  geom_jitter(aes(x = "ARIMA",  arima.results$MAPE, color = "ARIMA", alpha = 0.1), width= 0.1)+
+  geom_boxplot(aes(x = "NNETAR", nnetar.results$MAPE, color = "NNETAR")) +
+  geom_jitter(aes(x = "NNETAR",  nnetar.results$MAPE, color = "NNETAR", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "PROPHET", prophet.results$MAPE, color = "PROPHET")) +
+  geom_jitter(aes(x = "PROPHET", prophet.results$MAPE, color = "PROPHET", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "TBATS", tbats.results$MAPE, color = "TBATS")) + 
+  geom_jitter(aes(x = "TBATS", tbats.results$MAPE, color = "TBATS", alpha = 0.1), width= 0.1) + 
+  geom_boxplot(aes(x = "MEAN", mean.results$MAPE, color = "MEAN")) +
+  geom_jitter(aes(x = "MEAN", mean.results$MAPE, color = "MEAN", alpha = 0.1), width= 0.1) +
+  theme_bw()+
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+#        axis.title.y = element_text(size=25),
+#        axis.text = element_text(size=16)
+        )+
+  labs(x = "MODELS", y = "%")+
+  scale_y_continuous(breaks = seq(0, 50, 5))+
+
+  ggtitle("MAPE for 30 test sets") +
+  ggsave("resultadoNoInformadoMAPEBoxPlot.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+```
+
+```{r}
+ggplot() + 
+  geom_boxplot(aes(x = "SNAIVE", snaivex.results$RMSE, color = "SNAIVE"))+
+  geom_jitter(aes(x = "SNAIVE", snaivex.results$RMSE, color = "SNAIVE", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "ARIMAX", arimax.results$RMSE, color = "ARIMA")) + 
+  geom_jitter(aes(x = "ARIMAX",  arimax.results$RMSE, color = "ARIMA", alpha = 0.1), width= 0.1)+
+  geom_boxplot(aes(x = "NNETARX", nnetarx.results$RMSE, color = "NNETAR")) +
+  geom_jitter(aes(x = "NNETARX",  nnetarx.results$RMSE, color = "NNETAR", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "PROPHETX", prophetx.results$RMSE, color = "PROPHET")) +
+  geom_jitter(aes(x = "PROPHETX", prophetx.results$RMSE, color = "PROPHET", alpha = 0.1), width= 0.1) + 
+  geom_boxplot(aes(x = "MEANX", meanx.results$RMSE, color = "MEAN")) +
+  geom_jitter(aes(x = "MEANX", meanx.results$RMSE, color = "MEAN", alpha = 0.1), width= 0.1)+
+  theme_bw()+
+  theme(legend.position = "none",
+        axis.title.x=element_blank(),
+       axis.text = element_text(size=15)
+       )+
+  xlab("MODELS") + ylab("ºC") +  ggtitle("RMSE for 30 test sets")+
+  ggsave("resultadoInformadoRMSEBoxPlot.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades")
+
+
+ggplot() + 
+  geom_boxplot(aes(x = "SNAIVE", snaivex.results$MAPE, color = "SNAIVE"))+
+  geom_jitter(aes(x = "SNAIVE", snaivex.results$MAPE, color = "SNAIVE", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "ARIMAX", arimax.results$MAPE, color = "ARIMA")) + 
+  geom_jitter(aes(x = "ARIMAX",  arimax.results$MAPE, color = "ARIMA", alpha = 0.1), width= 0.1)+
+  geom_boxplot(aes(x = "NNETARX", nnetarx.results$MAPE, color = "NNETAR")) +
+  geom_jitter(aes(x = "NNETARX",  nnetarx.results$MAPE, color = "NNETAR", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "PROPHETX", prophetx.results$MAPE, color = "PROPHET")) +
+  geom_jitter(aes(x = "PROPHETX", prophetx.results$MAPE, color = "PROPHET", alpha = 0.1), width= 0.1) + 
+  geom_boxplot(aes(x = "MEANX", meanx.results$MAPE, color = "MEAN")) +
+  geom_jitter(aes(x = "MEANX", meanx.results$MAPE, color = "MEAN", alpha = 0.1), width= 0.1)+
+  theme_bw()+
+  theme(legend.position = "none",
+        axis.title.x=element_blank()
+     #   axis.text = element_text(size=15)
+     )+
+  xlab("MODELS") + ylab("%") +  ggtitle("MAPE for 30 test sets")
+  ggsave("resultadoInformadoMAPEBoxPlot.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades/")
+
+```
+
+
+```{r}
+ggplot() + 
+  geom_boxplot(aes(x = "SNAIVE", snaive.results$RMSE, color = "SNAIVE"))+
+  geom_jitter(aes(x = "SNAIVE", snaive.results$RMSE, color = "SNAIVE", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "SNAIVEX", snaivex.results$RMSE, color = "SNAIVEX"))+
+  geom_jitter(aes(x = "SNAIVEX", snaivex.results$RMSE, color = "SNAIVEX", alpha = 0.1), width= 0.1)+
+  
+  geom_boxplot(aes(x = "ARIMA", arima.results$RMSE, color = "ARIMA")) + 
+  geom_jitter(aes(x = "ARIMA",  arima.results$RMSE, color = "ARIMA", alpha = 0.1), width= 0.1)+
+  geom_boxplot(aes(x = "ARIMAX", arimax.results$RMSE, color = "ARIMAX")) + 
+  geom_jitter(aes(x = "ARIMAX",  arimax.results$RMSE, color = "ARIMAX", alpha = 0.1), width= 0.1) +
+    
+  geom_boxplot(aes(x = "NNETAR", nnetar.results$RMSE, color = "NNETAR")) +
+  geom_jitter(aes(x = "NNETAR",  nnetar.results$RMSE, color = "NNETAR", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "NNETARX", nnetarx.results$RMSE, color = "NNETARX")) +
+  geom_jitter(aes(x = "NNETARX",  nnetarx.results$RMSE, color = "NNETARX", alpha = 0.1), width= 0.1) +  
+    
+  geom_boxplot(aes(x = "PROPHET", prophet.results$RMSE, color = "PROPHET")) +
+  geom_jitter(aes(x = "PROPHET", prophet.results$RMSE, color = "PROPHET", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "PROPHETX", prophetx.results$RMSE, color = "PROPHETX")) +
+  geom_jitter(aes(x = "PROPHETX", prophetx.results$RMSE, color = "PROPHETX", alpha = 0.1), width= 0.1) +
+ 
+  geom_boxplot(aes(x = "TBATS", tbats.results$RMSE, color = "TBATS")) + 
+  geom_jitter(aes(x = "TBATS", tbats.results$RMSE, color = "TBATS", alpha = 0.1), width= 0.1) + 
+
+  geom_boxplot(aes(x = "MEAN", mean.results$RMSE, color = "MEAN")) +
+  geom_jitter(aes(x = "MEAN", mean.results$RMSE, color = "MEAN", alpha = 0.1), width= 0.1) +
+  geom_boxplot(aes(x = "MEANX", meanx.results$RMSE, color = "MEANX")) +
+  geom_jitter(aes(x = "MEANX", meanx.results$RMSE, color = "MEANX", alpha = 0.1), width= 0.1) +
+  xlab("MODELS") + ylab("?C") +  ggtitle("RMSE for 30 test sets in 2018") +
+  
+  scale_colour_manual(values  = 
+                          c('SNAIVE'   =  'firebrick',
+                            'SNAIVEX'   =  'firebrick',
+                            'ARIMA'   =  'springgreen1',
+                            'ARIMAX'     =  'springgreen1',
+                            'NNETAR'   =  'mediumpurple1',
+                            'NNETARX'   =  'mediumpurple1',
+                            'PROPHET'   =  'steelblue1',
+                            'PROPHETX'     =  'steelblue1',
+                            'TBATS'   =  'lightpink1',
+                            'TBATS'   =  'lightpink1',
+                            'MEAN'   =  'orange1',
+                            'MEANX'     =  'orange2'))+  
+  theme(plot.title = element_text(hjust = 0.5),
+          legend.position="none",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"),
+          axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+
+
+```
+
+```{r}
+alpha = 0.3
+ggplot() + 
+  geom_boxplot(aes(x = "SNAIVE", snaive.results$RMSE,  color = "NOINF"),alpha = alpha,)+
+  geom_jitter(aes(x = "SNAIVE", snaive.results$RMSE, color = "NOINF",), alpha = alpha, width= 0.1) +
+  geom_boxplot(aes(x = "SNAIVE", snaivex.results$RMSE, color = "INF"), alpha = alpha)+
+  geom_jitter(aes(x = "SNAIVE", snaivex.results$RMSE, color = "INF"), alpha = alpha, width= 0.1) +
+  
+  geom_boxplot(aes(x = "ARIMA", arima.results$RMSE,color = "NOINF"), alpha = alpha) + 
+  geom_jitter(aes(x = "ARIMA",  arima.results$RMSE, color = "NOINF"), alpha = alpha, width= 0.1)+
+  geom_boxplot(aes(x = "ARIMA", arimax.results$RMSE, color = "INF"), alpha = alpha) + 
+  geom_jitter(aes(x = "ARIMA",  arimax.results$RMSE, color = "INF"), alpha = alpha, width= 0.1) +
+    
+  geom_boxplot(aes(x = "NNETAR", nnetar.results$RMSE,  color = "NOINF"), alpha = alpha) +
+  geom_jitter(aes(x = "NNETAR",  nnetar.results$RMSE, color = "NOINF"), alpha = alpha, width= 0.1) +
+  geom_boxplot(aes(x = "NNETAR", nnetarx.results$RMSE, color = "INF"), alpha = alpha) +
+  geom_jitter(aes(x = "NNETAR",  nnetarx.results$RMSE, color = "INF"), alpha = alpha, width= 0.1)+
+    
+  geom_boxplot(aes(x = "PROPHET", prophet.results$RMSE, color = "NOINF"), alpha = alpha) +
+  geom_jitter(aes(x = "PROPHET", prophet.results$RMSE, color = "NOINF"),alpha = alpha, width= 0.1) +
+  geom_boxplot(aes(x = "PROPHET", prophetx.results$RMSE, color = "INF"), alpha = alpha,) +
+  geom_jitter(aes(x = "PROPHET", prophetx.results$RMSE, color = "INF"),alpha = alpha, width= 0.1)+
+ 
+  geom_boxplot(aes(x = "TBATS", tbats.results$RMSE, color = "NOINF"), alpha = alpha) + 
+  geom_jitter(aes(x = "TBATS", tbats.results$RMSE, color = "NOINF"), alpha = alpha, width= 0.1) +
+
+  geom_boxplot(aes(x = "MEAN", mean.results$RMSE, color = "NOINF"), alpha = alpha) +
+  geom_jitter(aes(x = "MEAN", mean.results$RMSE, color = "NOINF"), alpha = alpha, width= 0.1) +
+  geom_boxplot(aes(x = "MEAN", meanx.results$RMSE, color = "INF"), alpha = alpha) +
+  geom_jitter(aes(x = "MEAN", meanx.results$RMSE, color = "INF"),  alpha = alpha, width= 0.1) +
+  xlab(element_blank()) + ylab("ºC") +  ggtitle("RMSE for 30 test sets") +
+  
+  scale_colour_manual(values  = 
+                          c('NOINF'   =  'red',
+                            'INF'   =  'darkgreen'))+  
+  theme_bw()+
+  theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm")) +
+ggsave("boxplotsEscenarios.tiff",
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades/")
+```
+
+
+
+
+## SCATTER PLOTS
+
+```{r}
+ggplot() + 
+  geom_point(aes(x =snaive.results$CC ,y = snaive.results$RMSE, color = "SNAIVE"))+
+  geom_point(aes(x = arima.results$CC, arima.results$RMSE, color = "ARIMA"))+
+  geom_point(aes(x = nnetar.results$CC, nnetar.results$RMSE, color = "NNETAR")) +
+  geom_point(aes(x = prophet.results$CC, prophet.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(x = tbats.results$CC, tbats.results$RMSE, color = "TBATS")) + 
+  geom_point(aes(x = mean.results$CC, mean.results$RMSE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position="none"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  guides(col = guide_legend(nrow = 1))+
+
+  labs(x =  element_blank(), y = "RMSE ERROR (?C)", color = element_blank())+
+  ggtitle("RMSE - CC for 30 test sets in 2018") +
+  ggsave("scatterCC_RMS_noInf.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+ggplot() + 
+  geom_point(aes(x =snaive.results$CC ,y = snaive.results$RMSE, color = "SNAIVE"))+
+  geom_point(aes(x = arima.results$CC, arima.results$RMSE, color = "ARIMA"))+
+  geom_point(aes(x = nnetar.results$CC, nnetar.results$RMSE, color = "NNETAR")) +
+  geom_point(aes(x = prophet.results$CC, prophet.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(x = tbats.results$CC, tbats.results$RMSE, color = "TBATS")) + 
+  geom_point(aes(x = mean.results$CC, mean.results$RMSE, color = "MEAN")) +
+  theme_bw() + 
+ theme(legend.position="none"
+       #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+ guides(col = guide_legend(nrow = 1))+
+  labs(x = element_blank(), y = element_blank(), color = element_blank())+
+  ggtitle("RMSE - CC for 30 test sets in 2018") +
+  
+  coord_cartesian(xlim = c(0, 500000),
+                  ylim = c(0, 10)) +
+  ggsave("scatterCC_RMS_noInfZoom.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+```{r}
+ggplot() + 
+  geom_point(aes(x =snaive.results$CC ,y = snaive.results$MAPE, color = "SNAIVE"))+
+  geom_point(aes(x = arima.results$CC, arima.results$MAPE, color = "ARIMA"))+
+  geom_point(aes(x = nnetar.results$CC, nnetar.results$MAPE, color = "NNETAR")) +
+  geom_point(aes(x = prophet.results$CC, prophet.results$MAPE, color = "PROPHET")) +
+  geom_point(aes(x = tbats.results$CC, tbats.results$MAPE, color = "TBATS")) + 
+  geom_point(aes(x = mean.results$CC, mean.results$MAPE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position="none"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "CC", y = "MAPE ERROR (%)", color = element_blank())+
+  ggtitle("MAPE - CC for 30 test sets in 2018") +
+  ggsave("scatterCC_MAPE_noInf.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+
+ggplot() + 
+  geom_point(aes(x =snaive.results$CC ,y = snaive.results$MAPE, color = "SNAIVE"))+
+  geom_point(aes(x = arima.results$CC, arima.results$MAPE, color = "ARIMA"))+
+  geom_point(aes(x = nnetar.results$CC, nnetar.results$MAPE, color = "NNETAR")) +
+  geom_point(aes(x = prophet.results$CC, prophet.results$MAPE, color = "PROPHET")) +
+  geom_point(aes(x = tbats.results$CC, tbats.results$MAPE, color = "TBATS")) + 
+  geom_point(aes(x = mean.results$CC, mean.results$MAPE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position="none"
+        #,
+        #axis.title.x=element_blank(),
+        #axis.text.x=element_blank(),
+        #axis.ticks.x=element_blank()
+        )+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "CC", y = element_blank(), color = element_blank())+
+  ggtitle("MAPE - CC for 30 test sets in 2018") +
+  coord_cartesian(xlim = c(0, 500000),
+                  ylim = c(0, 30)) +
+  ggsave("scatterCC_MAPE_noInfZoom.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+ggplot() + 
+  geom_point(aes(x =snaive.results$CC ,y = snaive.results$RMSE, color = "SNAIVE"))+
+  geom_point(aes(x = arima.results$CC, arima.results$RMSE, color = "ARIMA"))+
+  geom_point(aes(x = nnetar.results$CC, nnetar.results$RMSE, color = "NNETAR")) +
+  geom_point(aes(x = prophet.results$CC, prophet.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(x = tbats.results$CC, tbats.results$RMSE, color = "TBATS")) + 
+  geom_point(aes(x = mean.results$CC, mean.results$RMSE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position = "bottom")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "CC", y = "RMSE ERROR (?C)", color = element_blank())+
+  ggtitle("RMSE - CC for 30 test sets in 2018") + 
+  coord_cartesian(xlim = c(0, 50000),
+                  ylim = c(0, 10)) +
+  ggsave("scatterCC_RMS_noInfZoom.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+ggplot() + 
+  geom_point(aes(x =snaivex.results$CC,y = snaivex.results$RMSE, color = "SNAIVE"))+
+  geom_point(aes(x = arimax.results$CC, arimax.results$RMSE, color = "ARIMA"))+
+  geom_point(aes(x = nnetarx.results$CC, nnetarx.results$RMSE, color = "NNETAR")) +
+  geom_point(aes(x = prophetx.results$CC, prophetx.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(x = meanx.results$CC, meanx.results$RMSE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position = "none")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = element_blank(), y = "RMSE ERROR (?C)", color = element_blank())+
+  ggtitle("RMSE - CC for 30 test sets in 2018") +
+  ggsave("scatterCC_RMSE_Inf.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+
+ggplot() + 
+  geom_point(aes(x =snaivex.results$CC,y = snaivex.results$RMSE, color = "SNAIVE"))+
+  geom_point(aes(x = arimax.results$CC, arimax.results$RMSE, color = "ARIMA"))+
+  geom_point(aes(x = nnetarx.results$CC, nnetarx.results$RMSE, color = "NNETAR")) +
+  geom_point(aes(x = prophetx.results$CC, prophetx.results$RMSE, color = "PROPHET")) +
+  geom_point(aes(x = meanx.results$CC, meanx.results$RMSE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position = "none")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = element_blank(), y = element_blank(), color = element_blank())+
+  ggtitle("RMSE - CC for 30 test sets in 2018") +
+  coord_cartesian(xlim = c(0, 250000),
+                  ylim = c(1, 6))  +
+  ggsave("scatterCC_RMSE_InfZoom.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+```{r}
+ggplot() + 
+  geom_point(aes(x =snaivex.results$CC,y = snaivex.results$MAPE, color = "SNAIVE"))+
+  geom_point(aes(x = arimax.results$CC, arimax.results$MAPE, color = "ARIMA"))+
+  geom_point(aes(x = nnetarx.results$CC, nnetarx.results$MAPE, color = "NNETAR")) +
+  geom_point(aes(x = prophetx.results$CC, prophetx.results$MAPE, color = "PROPHET")) +
+  geom_point(aes(x = meanx.results$CC, meanx.results$MAPE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position = "bottom")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "CC", y = "MAPE ERROR (%)", color = element_blank())+
+  ggtitle("MAPE - CC for 30 test sets in 2018") +
+  ggsave("scatterCC_MAPE_Inf.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+
+
+ggplot() + 
+  geom_point(aes(x =snaivex.results$CC,y = snaivex.results$MAPE, color = "SNAIVE"))+
+  geom_point(aes(x = arimax.results$CC, arimax.results$MAPE, color = "ARIMA"))+
+  geom_poifnt(aes(x = nnetarx.results$CC, nnetarx.results$MAPE, color = "NNETAR")) +
+  geom_point(aes(x = prophetx.results$CC, prophetx.results$MAPE, color = "PROPHET")) +
+  geom_point(aes(x = meanx.results$CC, meanx.results$MAPE, color = "MEAN")) +
+  theme_bw() + 
+  theme(legend.position = "bottom")+
+  guides(col = guide_legend(nrow = 1))+
+  labs(x = "CC", y = element_blank(), color = element_blank())+
+  ggtitle("MAPE - CC for 30 test sets in 2018") +
+  coord_cartesian(xlim = c(0, 250000),
+                  ylim = c(0, 20))  +
+  ggsave("scatterCC_MAPE_InfZoom.jpeg",
+         width = 6,
+         dpi = "print",
+         height = 4,
+         path = "./exportsPleiades")
+```
+
+
+
+```{r}
+sapply(trainedModelsList, "[[", "SNAIVE") -> minsSnaive.noInf
+minsSnaive.noInf[2,] %>% unlist() %>% sum()
+
+sapply(trainedModelsList, "[[", "ARIMA") -> minsArima.noInf
+minsArima.noInf[2,] %>% unlist() %>% sum()
+
+sapply(trainedModelsList, "[[", "TBATS") -> minsTBATS.noInf
+minsTBATS.noInf[2,] %>% unlist() %>% sum()
+
+sapply(trainedModelsList, "[[", "PROPHET") -> minsPROPHET.noInf
+minsPROPHET.noInf[2,] %>% unlist() %>% sum()
+
+sapply(trainedModelsList, "[[", "NNETAR") -> minsNNETAR.noInf
+minsNNETAR.noInf[2,] %>% unlist() %>% sum()
+```
+
+

@@ -1,0 +1,772 @@
+---
+title: "pleiadesGH_preproc_vis"
+author: "Jose Vicente Yago Martinez"
+date: "21/4/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(forecast)
+library(prophet)
+library(ggplot2)
+library(scales)
+library(urca)
+library(tsfeatures)
+library(tidyverse)
+library(ForecastComb)
+library(imputeTS)
+library(reshape2)
+library(gridExtra)
+library(PerformanceAnalytics)
+```
+
+```{r}
+route_proc = "../../DATA/DATA_UMU/PROC/"
+freq.daily <- 48
+
+ts.daily <- paste(route_proc, "ts.daily.rds", sep="") %>%  readRDS()
+ts.daily.broken <- paste(route_proc, "ts.daily.broken.rds", sep="") %>%  readRDS()
+
+
+pleiadesGH.v0 <- paste(route_proc, "pleiadesGH.v0.rds", sep="") %>%  readRDS()
+pleiadesGH.v0.interp <- paste(route_proc, "pleiadesGH.v0.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v1 <- paste(route_proc, "pleiadesGH.v1.rds", sep="") %>%  readRDS()
+pleiadesGH.v1.interp <- paste(route_proc, "pleiadesGH.v1.interp.rds", sep="") %>%  readRDS()
+
+pleiadesGH.v2 <- paste(route_proc, "pleiadesGH.v2.rds", sep="") %>%  readRDS()
+pleiadesGH.v2.interp <- paste(route_proc, "pleiadesGH.v2.interp.rds", sep="") %>%  readRDS()
+
+```
+
+
+#SENSORES HERMANOS
+
+## Temperatura de las macetas
+```{r}
+values1 <- pleiadesGH.v0.interp$temp1Mac
+values2 <- pleiadesGH.v0.interp$temp2Mac
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+## Temperaturas interiores
+```{r}
+values1 <- pleiadesGH.v0.interp$temp1Int
+values2 <- pleiadesGH.v0.interp$temp2Int
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+## Humedades interiores
+```{r}
+values1 <- pleiadesGH.v0.interp$hum1Int.R
+values2 <- pleiadesGH.v0.interp$hum2Int.R
+ccf(as.numeric(values1), as.numeric(values2))
+```
+
+# DIFERENCIAS ENTRE VERSIONES
+
+## Humedad relativa
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp, aes(x=time)) +
+    geom_line(aes( y = hum1Int.R, color = 'Hum1Int'),alpha = 0.5) +
+    geom_line(aes( y = hum2Int.R, color = 'Hum2Int'),alpha = 0.5) +
+
+    labs(x =NULL, y = "%") + 
+    scale_y_continuous(breaks = seq(0, 100, 5))+
+    theme_gray()+
+    ggtitle("Humedad relativa interior versiones")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+    coord_cartesian(xlim = c(iniv, finv), ylim = c(0,100)) 
+ggsave("humIntRelsHermanos.jpeg",
+        width = 12,
+        dpi = "retina",
+        height = 5,
+       path = "./exportsPleiades")
+
+```
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+
+#pleiadesGH.v0.interp[,c("hum2Int.R", "hum1Int.R")] %>% cor # 0.97
+
+
+df.texto <- data.frame(
+  x = c(20),
+  y = c(97),
+  text = c("COR = 0.97")
+)
+
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp) +
+    geom_line(aes(x = hum1Int.R, y = hum2Int.R ),alpha = 0.5) +
+    geom_smooth(aes(hum1Int.R, hum2Int.R),method='lm', se = F, color = "green", size = 3)+
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+
+    labs(x = "hum1Int.R", y = "hum1Int.R") + 
+    scale_y_continuous(breaks = seq(0, 100, 5))+
+    theme_gray()+
+    ggtitle("Humedad relativa interior versiones")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+#    coord_cartesian(xlim = c(iniv, finv)) 
+ggsave("humIntRelsHermanosCOR.jpeg",
+        width = 12,
+        dpi = "retina",
+        height = 5,
+       path = "./exportsPleiades")
+
+```
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp, aes(x=time)) +
+    geom_line(aes( y = hum1Int.R - hum2Int.R, color = 'diff'),alpha = 0.5) +
+
+    labs(x =NULL, y = "%") + 
+    scale_y_continuous(breaks = seq(-40, 40, 5))+
+    theme_gray()+
+    ggtitle("Humedad relativa interior hum1Int - hum2Int")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+    coord_cartesian(xlim = c(iniv, finv), ylim = c(-40,40)) 
+ggsave("humIntRelsHermanosDiff.jpeg",
+        width = 12,
+        dpi = "retina",
+        height = 5,
+        path = "./exportsPleiades")
+```
+
+## Temperatura interior
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp, aes(x=time)) +
+    geom_line(aes( y = temp1Int, color = 'TempIntV1'),alpha = 0.5) +
+    geom_line(aes( y = temp2Int, color = 'TempIntV2'),alpha = 0.5) +
+
+    labs(x =NULL, y = "°C") + 
+    scale_y_continuous(breaks = seq(5, 50, 5))+
+    theme_gray()+
+    ggtitle("Temperatura interior versiones")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+    coord_cartesian(xlim = c(iniv, finv), ylim = c(5,50)) 
+ggsave("tempIntsHermanos.jpeg",
+       width = 12,
+       dpi = "retina",
+       height = 5,
+       path = "./exportsPleiades")
+```
+
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+
+pleiadesGH.v0.interp[,c("temp1Int", "temp2Int")] %>% cor # 0.98
+
+
+df.texto <- data.frame(
+  x = c(10),
+  y = c(45),
+  text = c("COR = 0.98")
+)
+
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp) +
+    geom_line(aes(x = temp1Int, y = temp2Int ),alpha = 0.5) +
+    geom_smooth(aes(temp1Int, temp2Int),method='lm', se = F, color = "green", size = 3)+
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+
+    labs(x = "temp1Int", y = "temp2Int") + 
+    scale_y_continuous(breaks = seq(0, 100, 5))+
+    theme_gray()+
+    ggtitle("Temperatura interior versiones")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+#    coord_cartesian(xlim = c(iniv, finv)) 
+ggsave("tempIntsHermanosCOR.jpeg",
+        width = 12,
+        dpi = "retina",
+        height = 5,
+       path = "./exportsPleiades")
+
+```
+
+
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp, aes(x=time)) +
+    geom_line(aes( y = temp1Int - temp2Int, color = 'diff'),alpha = 0.5) +
+
+    labs(x =NULL, y = "°C") + 
+    scale_y_continuous(breaks = seq(-10, +10, 5))+
+    theme_gray()+
+    ggtitle("Temperatura interior temp1Int - temp2Int")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+    coord_cartesian(xlim = c(iniv, finv), ylim = c(-10,+10)) 
+ggsave("tempIntsHermanosDiff.jpeg",
+       width = 12,
+       dpi = "retina",
+       height = 5,
+       path = "./exportsPleiades")
+```
+
+
+## Temperatura interior maceta
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp, aes(x=time)) +
+    geom_line(aes( y = temp1Mac, color = 'TempMacV1'),alpha = 0.5) +
+    geom_line(aes( y = temp2Mac, color = 'TempMacV2'),alpha = 0.5) +
+
+    labs(x =NULL, y = "°C") + 
+    scale_y_continuous(breaks = seq(5, 50, 5))+
+    theme_gray()+
+    ggtitle("Temperatura interior maceta versiones")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+    coord_cartesian(xlim = c(iniv, finv), ylim = c(5,50)) 
+ggsave("tempIntMacsHermanos.jpeg",
+       width = 12,
+       dpi = "retina",
+       height = 5,
+       path = "./exportsPleiades")
+```
+
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+
+pleiadesGH.v0.interp[,c("temp1Mac", "temp2Mac")] %>% cor # 0.93
+
+
+df.texto <- data.frame(
+  x = c(10),
+  y = c(45),
+  text = c("COR = 0.93")
+)
+
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp) +
+    geom_line(aes(x = temp1Mac, y = temp2Mac ),alpha = 0.5) +
+    geom_smooth(aes(temp1Mac, temp2Mac),method='lm', se = F, color = "green", size = 3)+
+    geom_text(aes(df.texto$x,df.texto$y,label=df.texto$text), size = 5)+
+
+    labs(x = "temp1Mac", y = "temp2Mac") + 
+    scale_y_continuous(breaks = seq(0, 100, 5))+
+    theme_gray()+
+    ggtitle("Temperatura interior maceta versiones")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+#    coord_cartesian(xlim = c(iniv, finv)) 
+ggsave("tempIntsHermanosCOR.jpeg",
+        width = 12,
+        dpi = "retina",
+        height = 5,
+       path = "./exportsPleiades")
+
+```
+
+
+```{r}
+iniv = as.POSIXct("2018-1-1")
+finv = as.POSIXct("2019-1-1")
+#Temperatura interior
+  ggplot(data = pleiadesGH.v0.interp, aes(x=time)) +
+    geom_line(aes( y = temp1Mac - temp2Mac, color = 'diff'),alpha = 0.5) +
+
+    labs(x =NULL, y = "°C") + 
+    scale_y_continuous(breaks = seq(-20, 20, 5))+
+    theme_gray()+
+    ggtitle("Temperatura interior maceta temp1Mac - temp2Mac")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"))  +
+    coord_cartesian(xlim = c(iniv, finv), ylim = c(-20,20)) 
+ggsave("tempIntMacsHermanosDiff.jpeg",
+       width = 12,
+       dpi = "retina",
+       height = 5,
+       path = "./exportsPleiades")
+```
+
+
+
+
+# COMPARATIVA RESAMPLED
+Sola la voy a hacer de los datos del megadataframe y la version V2.
+
+```{r}
+library(scales)
+inicio = as.POSIXct("2018-6-3 00:00:00")
+fin    = as.POSIXct("2018-6-5 00:00:00")
+scale <- scale_x_datetime(breaks = seq(inicio, fin, "2 hour"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+```
+
+
+
+
+## EXTERIOR
+
+### Humedad exterior
+```{r}
+
+
+ggplot() +
+  geom_line(aes(x=megadf$timeHum_ext, y =megadf$Hum_ext,
+                colour = "original"), na.rm =  TRUE) +
+  geom_point(aes(x=megadf$timeHum_ext, y =megadf$Hum_ext,
+                colour = "original"),size = 3, na.rm =  TRUE) +
+  
+  geom_line(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$humExt.R,
+                 colour = "resampled"), na.rm =TRUE) +
+  geom_point(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$humExt.R,
+                 colour = "resampled"), na.rm =TRUE) +
+  
+  coord_cartesian(xlim = c(inicio, fin)) + labs(x ="Time", y = "%") +
+  scale+
+  scale_y_continuous(breaks = seq(0, 100, 5))+
+  ggtitle("Exterior relative humidity resampled performance")+
+  theme_bw()+
+      theme(plot.title = element_text(hjust = 0.5),
+            legend.position="bottom",
+            legend.box = "horizontal",
+            legend.title=element_blank(),
+            legend.spacing.x = unit(1,"mm"),
+            axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+ggsave("compResampExtHR.jpeg",
+       path = "./exportsPleiades",
+       dpi = 200)
+```
+
+### Temperatura exterior
+```{r}
+ylim = max(megadf$Temp_ext, na.rm = T)
+
+ggplot() +
+  geom_line(aes(x=megadf$timeTemp_ext, y =megadf$Temp_ext,
+                colour = "original"), na.rm =  TRUE)+
+  geom_point(aes(x=megadf$timeTemp_ext, y =megadf$Temp_ext,
+                colour = "original"),size = 3, na.rm =  TRUE)+
+  
+  geom_line(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$tempExt,
+                colour = "resampled"), na.rm =TRUE)+
+  geom_point(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$tempExt,
+                colour = "resampled"), na.rm =TRUE)+
+  
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0, ylim))+ 
+  labs(x ="Tiempo",y = "°C")+
+  scale+
+  scale_y_continuous(breaks = seq(0, ylim, 2))+
+  ggtitle("Comparativa resampling temperatura exterior")+
+  theme_gray()+
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) 
+#ggsave("compResampExtT.jpeg",path = "./exportsPleiades")
+#ggsave("problemaMordiscoExteriorTSol.jpeg",path = "./exportsPleiades")
+
+```
+
+### Radiación solar
+```{r}
+
+ymax = max(megadf$Radsol_ext, na.rm = T)
+
+
+ggplot() +
+  geom_line(aes(x=megadf$timeRadsol_ext, y =megadf$Radsol_ext,
+                colour = "original [megadf]"), na.rm =  TRUE)+
+  geom_point(aes(x=megadf$timeRadsol_ext, y =megadf$Radsol_ext,
+                colour = "original [megadf]"),size=3, na.rm =  TRUE)+
+  
+  geom_line(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$radExt,
+                colour = "resampled.v2"))+
+  geom_point(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$radExt,
+                colour = "resampled.v2"))+
+
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0, ymax)) +
+  labs(x ="Time", y = "W/m²")+
+  scale+
+  scale_y_continuous(breaks = seq(0, ymax, 50))+
+  ggtitle("Solar irradiation resampled performance")+
+  theme_gray()+
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0)) 
+#ggsave("compResampRadSol.jpeg",path = "./exportsPleiades")
+#ggsave("problemaMordiscoExteriorRSSol.jpeg",path = "./exportsPleiades")
+
+```
+
+### Velocidad viento
+```{r}
+ggplot() +
+  geom_line(aes(x=megadf$timeVeloviento, y=megadf$Veloviento,
+                colour = "original [megadf]"), na.rm =  TRUE)+
+  
+  geom_point(aes(x=megadf$timeVeloviento, y=megadf$Veloviento,
+                colour = "original [megadf]"), na.rm =  TRUE)+
+  
+  geom_line(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$vientoVelo,
+                colour = "resampled.V2"), na.rm =TRUE)+  
+  
+  geom_point(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$vientoVelo,
+                colour = "resampled.V2"), na.rm =TRUE)+  
+
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0, 9))+
+  labs(x ="Time", y = "m/s")+
+  scale+
+  scale_y_continuous(breaks = seq(0, 9, 1))+
+  ggtitle("Wind velocity resampled performance")+
+  theme_gray()+
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+#ggsave("compResampVeloV.jpeg",path = "./exportsPleiades")
+#ggsave("problemaMordiscoExteriorVSol.jpeg",path = "./exportsPleiades")
+
+```
+
+
+## INTERIOR
+
+### Humedad interior
+```{r}
+ggplot() +
+  geom_line(aes(x=megadf$timeHum1_int, y=megadf$Hum1_int,
+                colour = "original H1.R [megadf]"), na.rm =  TRUE)+
+  geom_point(aes(x=megadf$timeHum1_int, y=megadf$Hum1_int,
+                colour = "original H1.R [megadf]"), size = 3, na.rm =  TRUE)+
+  
+  geom_line(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$humInt.R,
+                colour = "resampled.V2"))+
+  geom_point(aes(x=pleiadesGH.v2.interp$time, y=pleiadesGH.v2.interp$humInt.R,
+                colour = "resampled.V2"))+
+  
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0, 100)) +
+  labs(x ="Time", y = "%")+
+  scale+
+  scale_y_continuous(breaks = seq(0, 100, 5))+
+  ggtitle("Interior relative humidity resampled performance")+
+  theme_gray()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"),
+          axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+#ggsave("compResampIntHR.jpeg",path = "./exportsPleiades")
+
+```
+
+La curva perteneciente a resampled.V2 (azul), es la H1.R (roja) pero agregada en intervalos breakT.
+
+### Temperatura interior
+```{r}
+inicio = as.POSIXct("2018-1-12 00:00:00")
+fin    = as.POSIXct("2018-1-25 00:00:00")
+scale <- scale_x_datetime(breaks = seq(inicio, fin, "1 day"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+ggplot() +
+  geom_line(aes(x = megadf$timeTemp1_int[megadf$timeTemp1_int<fin],
+                y = megadf$Temp1_int[megadf$timeTemp1_int<fin],
+                colour = "original"), na.rm =  TRUE)+
+  
+  geom_point(aes(x = megadf$timeTemp1_int,
+                 y = megadf$Temp1_int, colour = "original"), na.rm =  TRUE)+
+
+  geom_line(aes(x = pleiadesGH.v2.interp$time,
+                y = pleiadesGH.v2.interp$tempInt, colour = "resampling"))+
+  geom_point(aes( x = pleiadesGH.v2.interp$time,
+                y = pleiadesGH.v2.interp$tempInt, colour = "resampling"))+ 
+  
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0,50)) +
+  scale+
+  scale_y_continuous(breaks = seq(0, 50, 2))+
+  ggtitle("Comparativa resampling temperatura interior")+
+  labs(x ="Tiempo", y = "°C")+
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+ggsave("compResampIntT.jpeg",
+       path = "./exportsPleiades",
+         width = 12,
+         dpi = "print",
+         height = 6)
+```
+La curva perteneciente a resampled.V2 (azul), es la H1.R (roja) pero agregada en intervalos breakT.
+
+
+
+### Temperatura Maceta 1
+```{r}
+inicio = as.POSIXct("2018-1-1 00:00:00")
+fin    = as.POSIXct("2019-1-1 00:00:00")
+scale <- scale_x_datetime(breaks = seq(inicio, fin, "30 day"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+
+ymax = 42
+
+megadf.preparado <- megadf[megadf$timeHum1_int < fin,]
+pleiadesGH.v2.interp.preparado <- pleiadesGH.v2.interp[pleiadesGH.v2.interp$time< fin,]
+
+ggplot() +
+  geom_line(aes(x = megadf.preparado$timeTemp1_int,
+                y = megadf.preparado$Temp1_int,
+                colour = "original"), na.rm =  TRUE)+
+  
+  geom_line(aes(x = pleiadesGH.v2.interp.preparado$time,
+                y = pleiadesGH.v2.interp.preparado$tempInt,
+                colour = "resampling"))+
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0, 50)) +
+  
+  labs(x ="Tiempo", y = "°C")+
+  scale+
+  scale_y_continuous(breaks = seq(0, 50, 2))+
+  ggtitle("Comparativa resampling temperatura interior")+
+  theme_bw()+    
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+ggsave("compResampInt.jpeg", dpi = 200, path = "./exportsPleiades")
+
+```
+La curva perteneciente a resampled.V2 (azul), es la H1.R (roja) pero agregada en intervalos breakT.
+
+
+```{r}
+inicio = as.POSIXct("2018-1-1 00:00:00")
+fin    = as.POSIXct("2019-6-1 00:00:00")
+scale <- scale_x_datetime(breaks = seq(inicio, fin, "30 day"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+
+ymax = 42
+
+ggplot() +
+  geom_line(aes(x = megadf$timeTemp_ext, y = megadf$Temp_ext,
+                colour = "original"), na.rm =  TRUE)+
+  
+  geom_line(aes(x = pleiadesGH.v2.interp$time, y = pleiadesGH.v2.interp$tempExt,
+                colour = "resampling"))+
+  
+  
+  coord_cartesian(xlim = c(inicio, fin),
+                  ylim = c(0, ymax)) +
+  
+  labs(x ="Tiempo", y = "°C")+
+  scale+
+  scale_y_continuous(breaks = seq(0, ymax, 2))+
+  ggtitle("Comparativa resampling temperatura exterior")+
+  theme_gray()+    
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+#ggsave("compResampIntMac.jpeg",path = "./exportsPleiades")
+
+```
+
+
+### Riego 
+
+```{r}
+ggplot() +
+  geom_point(aes(x = megadf$timeValvriego, y = megadf$Valvriego,
+                 colour = "original [megadf]"),size = 3, na.rm =  TRUE) +
+  
+  geom_point(aes(x = pleiadesGH.v1.interp$time, y = pleiadesGH.v1.interp$riego,
+                 colour = "resampled")) +
+  
+  theme_gray()+
+  ggtitle("Irrigation")+
+  labs(x ="Time", y = "ON/OFF")+
+
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+#ggsave("compResampRiego1.jpeg",path = "./exportsPleiades")
+
+```
+
+
+Con un poco más...
+
+```{r}
+inip = as.POSIXct("2018-2-25 05:00:00")
+finp = as.POSIXct("2018-2-25 08:00:00")
+
+scale <- scale_x_datetime(breaks = seq(inip, finp, "10 min"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+ggplot() +
+  geom_point(aes(x = megadf$timeValvriego, y = megadf$Valvriego,
+                 colour = "original [megadf]"), size = 2, na.rm =  TRUE) +
+  
+  geom_point(aes(x = pleiadesGH.v1.interp$time, y = pleiadesGH.v1.interp$riego,
+                 colour = "resampled"), na.rm =  TRUE) +  
+  
+  coord_cartesian(xlim = c(inip, finp)) +
+  scale+
+  ggtitle("Irrigation")+
+  theme_gray() +
+  labs(x ="Time", y = "ON/OFF")+
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position="bottom",
+        legend.box = "horizontal",
+        legend.title=element_blank(),
+        legend.spacing.x = unit(1,"mm"),
+        axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+#ggsave("compResampRiego2.jpeg",path = "./exportsPleiades")
+
+```
+
+
+# COMPARATIVA DE INTERPOLACION
+
+```{r}
+
+  ggTemperaturasInterp<-ggplot() +
+    geom_line(aes(x = pleiadesGH.v2.interp$time,
+                  y = pleiadesGH.v2.interp$tempInt, color = 'Interpolado')) +
+
+    geom_line(aes(x = pleiadesGH.v2$time,
+                  y = pleiadesGH.v2$tempInt, color = 'Original')) +
+  
+    labs(x =NULL, y = "ºC") + 
+    theme_gray()+
+    ggtitle("Resultado de la interpolación para temperatura interior")+
+    theme_bw()+
+    theme(plot.title = element_text(hjust = 0.5),
+          legend.position="bottom",
+          legend.box = "horizontal",
+          legend.title=element_blank(),
+          legend.spacing.x = unit(1,"mm"),
+          axis.text.x = element_text(angle = 25, vjust = 1.0, hjust = 1.0))
+
+
+ini = as.POSIXct("2018-1-12  00:00:00")
+fin = as.POSIXct("2018-1-30 00:00:00")
+
+scale <- scale_x_datetime(breaks = seq(ini, fin, "2 day"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+
+ggTemperaturasInterp + 
+  coord_cartesian(xlim = c(ini, fin),
+                  ylim = c(0, max(pleiadesGH.v2.interp$tempInt))) + scale
+ggsave("compInterpGlob.jpeg",
+       path = "./exportsPleiades",
+         width = 12,
+         dpi = "print",
+         height = 6)
+```
+
+
+```{r}
+#-------Más cerca
+
+ini = as.POSIXct("2018-1-16  00:00:00")
+fin = as.POSIXct("2018-1-31 00:00:00")
+
+scale <- scale_x_datetime(breaks = seq(ini, fin, "2 day"),
+                          labels = date_format("%m-%d %H:%M",
+                                               tz = "CET"))
+
+ggTemperaturasInterp + 
+  coord_cartesian(xlim = c(ini, fin),
+                  ylim = c(0, max(pleiadesGH.v2.interp$tempInt))) +
+  scale
+#ggsave("compInterpGlobZoom.jpeg",path = "./exportsPleiades")
+```
+
