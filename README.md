@@ -74,4 +74,6 @@ In order to improve this system, a brief study has been carried out to determine
 
 ACC = 0.89  
 
+ ![Pleiades interiors](https://github.com/VicenteYago/Greenhouses4.0-ML/blob/main/images/ROCnonInf.jpeg)
+
 
