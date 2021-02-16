@@ -12,16 +12,16 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(forecast)
-library(prophet)
+# library(prophet)
 library(ggplot2)
 library(scales)
 library(urca)
 library(tidyverse)
-library(ForecastComb)
+# library(ForecastComb)
 library(imputeTS)
 library(reshape2)
 library(gridExtra)
-library(PerformanceAnalytics)
+# library(PerformanceAnalytics)
 
 source("../../GREENHOUSES/funciones/forecastingFuns.R")
 
@@ -373,14 +373,15 @@ autoplot(sets.exog$`1`$TRAIN[,pred],color = "black") +
         #axis.text.x=element_blank(),
         #axis.ticks.x=element_blank()
         )+
-  ggtitle("Conjuntos de test evaluados") + ylab("?C")
+  ggtitle("Test sets evaluated") + ylab("ºC")+
   ggsave("testsSeq.jpeg",
-         width = 10,
-         dpi = "print",
-         height = 4,
-         path = "./exportsPleiades")
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades") -> p1
 
-
+p1
 ```
 
 ```{r}
@@ -418,13 +419,36 @@ autoplot(sets.exog$`1`$TEST[,pred]  %>% ts(frequency =48), series = '1')+
   theme_bw() +
   theme(legend.position="bottom")+
   guides(col = guide_legend(nrow = 3))+
-  ggtitle("Conjuntos de test evaluados") + labs(y = "?C", color = element_blank()) +
+  ggtitle("Test sets evaluated") + labs(y = "ºC", color = element_blank()) +
   ggsave("testsAlineados.jpeg",
-         width = 10,
-         dpi = 250,
-         height = 4,
-         path = "./exportsPleiades")
+       dpi = 600,
+       height = 6*2,
+       width = 8*2,
+       units = "cm",
+       path = "./exportsPleiades") -> p2
+p2
 ```
+
+
+```{r}
+library(gridExtra)
+#extract legend
+#https://github.com/hadley/ggplot2/wiki/Share-a-legend-between-two-ggplot2-graphs
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend<-g_legend(p2)
+
+
+p3 <- grid.arrange(arrangeGrob(p1 + theme(legend.position="none"),
+                         p2 + theme(legend.position="none"),
+                         ncol=1),
+             mylegend, nrow=2,heights=c(10, 1))
+```
+
 
 
 
