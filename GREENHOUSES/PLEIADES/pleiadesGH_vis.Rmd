@@ -315,7 +315,7 @@ ggTemperaturas +
   coord_cartesian(xlim = c(iniv, finv),
                   ylim = c(0, ylimT)) +
 #  scale+
-  ggsave("temperaturasGlobal.tiff",
+  ggsave("temperaturasGlobal.jpeg",
        dpi = 600,
        height = 6*2,
        width = 8*2,
@@ -1104,7 +1104,7 @@ pleiadesGH.v2.interp %>%
   theme(plot.title = element_text(hjust = 0.5),
           legend.position="bottom") +
   labs(x = "External Temperature(ºC)", y = "Internal Temperature(ºC)")+
-  ggsave("tempIntExtFacet.tiff",
+  ggsave("tempIntExtFacet.jpeg",
        dpi = 600,
        height = 6*2,
        width = 8*2,
